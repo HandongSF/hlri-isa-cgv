@@ -100,7 +100,7 @@ for i in tqdm(range(args.eval_episodes)):
         episode_images.append(obs['rgb'])
         episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
         step_counter += 1
-    goal_image, goal_mask, debug_image, goal_rotate, goal_flag = nav_planner.make_plan(episode_images[-12:])
+    goal_image, goal_mask, _, debug_image, goal_rotate, goal_flag = nav_planner.make_plan(episode_images[-12:])
     for j in range(min(11 - goal_rotate, 1 + goal_rotate)):
         if goal_rotate <= 6:
             obs = habitat_env.step(3)
@@ -111,10 +111,12 @@ for i in tqdm(range(args.eval_episodes)):
             episode_images.append(obs['rgb'])
             episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
         step_counter += 1
+
+    episode_images.append(debug_image)
+    episode_images.append(debug_image)
     nav_executor.reset(goal_image, goal_mask)
     last_reset_step = step_counter
 
-    step_counter = 0
     while not habitat_env.episode_over:
         action, skill_image = nav_executor.step(obs['rgb'], habitat_env.sim.previous_step_collided)
         if action != 0 or goal_flag:
@@ -148,6 +150,7 @@ for i in tqdm(range(args.eval_episodes)):
 
             # planning with priors
             direction_image, debug_mask, pri_flag, debug_image = nav_planner.apply_priors_on_image(obs['rgb'])
+            episode_images.append(debug_image)
             episode_images.append(debug_image)
             goal_image, goal_mask = direction_image, debug_mask
             goal_flag = pri_flag  # 이후 while 루프 상단의 조건문에서 활용

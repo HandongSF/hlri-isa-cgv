@@ -63,7 +63,7 @@ class GPT4V_Planner:
     def reset(self,object_goal):
         # translation to align for the detection model
         if object_goal == 'tv_monitor':
-            self.object_goal = 'tv'
+            self.object_goal = 'black screen'
         else:
             self.object_goal = object_goal
 
@@ -104,104 +104,51 @@ class GPT4V_Planner:
         return background_image
     
     def make_plan(self, pano_images):
+        """
+        Returns:
+            goal_image_bgr (np.ndarray, BGR): 정책 입력용 목표 이미지(BGR)
+            debug_mask     (np.ndarray, uint8 HxW): 정책 입력용 0/255 마스크
+            debug_image    (np.ndarray, RGB): 선택 포인트가 네모로 찍힌 원본 방향 프레임(디버그)
+            vis_bgr        (np.ndarray, BGR): YOLOE 검출(박스/라벨) + 선택 포인트가 표시된 오버레이
+            direction      (int): 선택된 파노라마 인덱스
+            goal_flag      (bool): 타깃이 직접 검출되었는지 여부
+        """
         _plan_t0 = time.perf_counter()
 
-        # 1) LLM로 방향/priors 결정
-        direction, goal_flag = self.query_gpt4v(pano_images)
-        direction_image = pano_images[direction]  # Habitat obs['rgb']는 RGB 배열
+        # 1) LLM로 진행 방향/priors 결정
+        direction, _ = self.query_gpt4v(pano_images)
+        direction_image = pano_images[direction]  # RGB
 
-        # 2) YOLOE 프롬프트(클래스셋) 보장
+        # 2) YOLOE 클래스 프롬프트 보장 (priors 반영)
         self._set_prompt_from_priors(self.latest_priors or {})
-        prompt_classes = getattr(self, "_prompt_classes", None)
-        floor_aliases  = getattr(self, "_floor_aliases", ['floor','ground','flooring'])
-        if not prompt_classes:
-            self._set_prompt_from_priors(self.latest_priors or {})
-            prompt_classes = self._prompt_classes
 
-        # 3) YOLOE 추론: "박스만" 사용 (세그 헤드 OFF)
-        det = yoloe_detection(
-            image=direction_image,       # RGB 그대로
-            target_classes=prompt_classes,
-            model=self.yoloe_model,
-            box_threshold=0.25,
+        # 3) priors-기반 웨이포인트 선택을 apply_priors_on_image로 통일
+        #    - 이 함수가 YOLOE 박스 → priors 스코어링 → 바닥 폴백까지 수행
+        goal_image_bgr, debug_mask, pri_flag, vis_bgr = self.apply_priors_on_image(
+            image=direction_image,
+            conf_threshold=0.25,
             iou_threshold=0.50,
-            run_extra_nms=False,
-            use_text_prompt=False,
-            retina_masks=False,          # ★ 세그멘테이션 비활성화
         )
 
-        H, W = direction_image.shape[:2]
-        debug_image = np.array(direction_image)
-
-        # 4) 클래스 인덱스 계산
-        try:
-            goal_idx = prompt_classes.index(self.object_goal)
-        except ValueError:
-            goal_idx = -1
-        floor_idx_set = {prompt_classes.index(n) for n in floor_aliases if n in prompt_classes}
-
-        # 5) 바운딩 박스만으로 중심점 선택
-        #    (라이브러리별 속성명을 모두 커버)
-        xyxy = getattr(det, "xyxy", None)
-        if xyxy is None:
-            xyxy = getattr(det, "boxes", None)
-        cls_ids = getattr(det, "class_id", np.empty((0,), dtype=int))
-        has_boxes = xyxy is not None and len(xyxy) > 0 and cls_ids.size > 0
-
-        # 기본값: 화면 중앙
-        px, py = W // 2, H // 2
-
-        def _pick_largest(indices):
-            if len(indices) == 0:
-                return None
-            areas = []
-            for i in indices:
-                x1, y1, x2, y2 = map(float, xyxy[i])
-                areas.append(max(0.0, x2 - x1) * max(0.0, y2 - y1))
-            return int(indices[int(np.argmax(areas))])
-
-        if has_boxes:
-            # 5-1) 목표 물체가 있으면: 가장 큰 박스 중심
-            if goal_idx >= 0 and np.any(cls_ids == goal_idx):
-                goal_flag = True
-                idxs = np.where(cls_ids == goal_idx)[0]
-                top = _pick_largest(idxs)
-                if top is not None:
-                    x1, y1, x2, y2 = map(float, xyxy[top])
-                    px, py = int((x1 + x2) / 2.0), int((y1 + y2) / 2.0)
-            else:
-                # 5-2) 목표가 없으면: 바닥(floor) 중 가장 큰 박스 중심
-                goal_flag = False
-                sel = np.where(np.isin(cls_ids, list(floor_idx_set)))[0]
-                top = _pick_largest(sel)
-                if top is not None:
-                    x1, y1, x2, y2 = map(float, xyxy[top])
-                    px, py = int((x1 + x2) / 2.0), int((y1 + y2) / 2.0)
-
-        # 6) 디버그 표식 & 정책용 마스크(박스 없이도 동일 규격)
+        # 4) 디버그용: 원본 RGB 프레임에 선택 포인트(마스크 중심) 표시
+        debug_image = np.array(direction_image)  # RGB 복사
+        ys, xs = np.where(debug_mask > 0)
+        if len(xs) > 0:
+            px = int(np.mean(xs))
+            py = int(np.mean(ys))
+        else:
+            H, W = debug_image.shape[:2]
+            px, py = W // 2, H // 2
         r = 8
-        x1, x2 = max(0, px - r), min(W, px + r)
-        y1, y2 = max(0, py - r), min(H, py + r)
+        cv2.rectangle(debug_image, (px - r, py - r), (px + r, py + r), (255, 0, 0), -1)  # RGB에 표식
 
-        # 디버그 사각형(시각화)
-        cv2.rectangle(debug_image, (px - r, py - r), (px + r, py + r), (255, 0, 0), -1)
-
-        # ★ 정책 입력용 마스크: 2D uint8, 0/255 (PixelNav가 내부에서 /255.0 처리)
-        debug_mask = np.zeros((H, W), dtype=np.uint8)
-        debug_mask[y1:y2, x1:x2] = 255
-
-        # 로깅(선택): 내부 트래젝토리에는 0/255 저장
+        # 5) 내부 로그/트래젝토리 업데이트
         self.direction_image_trajectory.append(direction_image)
         self.direction_mask_trajectory.append(debug_mask.copy())
-
         self.planner_durations.append(time.perf_counter() - _plan_t0)
 
-        # ★ Policy_Agent.reset()이 goal_image를 BGR→RGB로 바꾸므로,
-        #   여기서는 BGR로 넘겨 일관 유지
-        goal_image_bgr = cv2.cvtColor(direction_image, cv2.COLOR_RGB2BGR)
-        return goal_image_bgr, debug_mask, debug_image, direction, goal_flag
-
-
+        # 6) 리턴 (기존 시그니처 유지)
+        return goal_image_bgr, debug_mask, debug_image, vis_bgr, direction, pri_flag
 
 
     def _set_prompt_from_priors(self, priors: dict):
@@ -212,18 +159,21 @@ class GPT4V_Planner:
         gateways   = set(map(str.lower, (priors or {}).get("Gateways", []) or []))
         lookalikes = set(map(str.lower, (priors or {}).get("Lookalikes", []) or []))
 
-        # Scene→Object 힌트 평탄화 (너무 커지지 않도록 전체를 합치되 중복 제거)
+        # Scene→Object 힌트 평탄화
         hint_objs = []
         hints = (priors or {}).get("SceneToObjectHints", {}) or {}
         for objs in hints.values():
             hint_objs.extend(list(map(str.lower, objs or [])))
         hint_set = set(hint_objs)
 
-        # YOLOE 포지티브: 기본 탐지 + floor + (supports ∪ cooccurs ∪ gateways ∪ hint_objs)
-        extra_positive = sorted((supports | cooccurs | gateways | hint_set | set(floor_aliases)))
+        # 모든 priors (lookalikes 포함)을 YOLOE 클래스셋에 포함
+        extra_positive = sorted(
+            supports | cooccurs | gateways | lookalikes | hint_set | set(floor_aliases)
+        )
         prompt_classes = list(dict.fromkeys(self.detect_objects + extra_positive))
 
-        # 네거티브(lookalikes)는 후처리에서 패널티/제외용으로 보관
+        # lookalikes도 YOLOE로 감지되도록 추가하되,
+        # 후처리 scoring 단계에서만 패널티를 줌
         self._negatives = sorted(list(lookalikes))
 
         # 모델 클래스셋 적용 (변경 시에만)
@@ -306,7 +256,7 @@ class GPT4V_Planner:
 
 
     def apply_priors_on_image(self, image: np.ndarray,
-                            conf_threshold: float = 0.15,
+                            conf_threshold: float = 0.25,
                             iou_threshold: float = 0.50):
         # 프롬프트/클래스셋 확보
         prompt_classes = getattr(self, "_prompt_classes", None)
@@ -334,13 +284,14 @@ class GPT4V_Planner:
             retina_masks=False,   # ★ 세그멘테이션 비활성화
         )
 
-
-
-        # 결과 접근 (라이브러리 래퍼가 xyxy 또는 boxes를 쓸 수 있어 대비)
+        # 결과 접근
         xyxy = getattr(det, "xyxy", None)
         if xyxy is None:
             xyxy = getattr(det, "boxes", None)
         cls_ids = getattr(det, "class_id", None)
+
+        # ★ 박스별 confidence(1D) 확보
+        box_conf = np.asarray(det.confidence).astype(np.float32) if getattr(det, "confidence", None) is not None else None
 
         # 유틸
         def _safe_boxes_ok():
@@ -360,6 +311,18 @@ class GPT4V_Planner:
             areas = [_area(i) for i in indices]
             return int(indices[int(np.argmax(areas))])
 
+        # IoU
+        def _iou(i, j):
+            x1a, y1a, x2a, y2a = map(float, xyxy[i])
+            x1b, y1b, x2b, y2b = map(float, xyxy[j])
+            inter_x1 = max(x1a, x1b); inter_y1 = max(y1a, y1b)
+            inter_x2 = min(x2a, x2b); inter_y2 = min(y2a, y2b)
+            inter_w  = max(0.0, inter_x2 - inter_x1)
+            inter_h  = max(0.0, inter_y2 - inter_y1)
+            inter    = inter_w * inter_h
+            union    = _area(i) + _area(j) - inter + 1e-9
+            return inter / union
+
         # 목표 클래스 인덱스
         goal_name = getattr(self, "object_goal", "") or ""
         try:
@@ -369,74 +332,121 @@ class GPT4V_Planner:
 
         vis_bgr = draw_detections_bgr(rgb, det, goal_idx=goal_idx)
 
-        # 0) 기본값: 화면 중앙
+        # 기본 좌표/플래그
         px, py = W // 2, H // 2
-        pri_flag = False  # 목표 직접 발견 시 True
+        pri_flag = False
 
         if _safe_boxes_ok():
             cls_ids = np.asarray(cls_ids).astype(int)
 
-            # 1) 타깃 우선: 같은 클래스 중 가장 큰 박스
-            if goal_idx >= 0 and np.any(cls_ids == goal_idx):
-                inds = np.where(cls_ids == goal_idx)[0]
-                top = _pick_largest(inds)
-                if top is not None:
-                    px, py = _center(top)
-                    pri_flag = True
-                else:
-                    # 2) priors 기반 스코어링 (네거티브는 강한 패널티)
-                    pri = self.latest_priors or {
-                        "Supports": [], "StrongCooccurs": [], "Gateways": [],
-                        "Lookalikes": [], "SceneToObjectHints": {}
-                    }
-                    supports = set(map(str.lower, pri.get("Supports", [])))
-                    cooccurs = set(map(str.lower, pri.get("StrongCooccurs", [])))
-                    gateways = set(map(str.lower, pri.get("Gateways", [])))
-                    NEG      = set(map(str.lower, getattr(self, "_negatives", []) or []))
+            def _name(ci):
+                return str(prompt_classes[int(ci)]).lower() if 0 <= int(ci) < len(prompt_classes) else ""
 
-                    WEIGHTS = {"supports": 0.6, "cooccurs": 0.4, "gateways": 0.2, "negative": -1.0}
+            def _norm_area(i):
+                x1, y1, x2, y2 = map(float, xyxy[i])
+                return max(0.0, (x2 - x1) * (y2 - y1)) / float(W * H + 1e-6)
 
-                    def _name(ci):
-                        return str(prompt_classes[int(ci)]).lower() if 0 <= int(ci) < len(prompt_classes) else ""
+            def _bottom_bias(i):
+                x1, y1, x2, y2 = map(float, xyxy[i])
+                h_bottom = max(y1, y2)
+                return (h_bottom / H)
 
-                    best_i, best_s, best_a = None, -1e9, -1.0
-                    for i, ci in enumerate(cls_ids):
-                        name = _name(ci)
-                        if name in NEG:
-                            score = WEIGHTS["negative"]
-                        elif name in supports:
-                            score = WEIGHTS["supports"]
-                        elif name in cooccurs:
-                            score = WEIGHTS["cooccurs"]
-                        elif name in gateways:
-                            score = WEIGHTS["gateways"]
-                        else:
-                            score = 0.0
-                        area = _area(i)
-                        if (score > best_s) or (np.isclose(score, best_s) and area > best_a):
-                            best_i, best_s, best_a = i, score, area
+            # priors 집합
+            pri = self.latest_priors or {"Supports": [], "StrongCooccurs": [], "Gateways": [],
+                                        "Lookalikes": [], "SceneToObjectHints": {}}
+            supports = set(map(str.lower, pri.get("Supports", [])))
+            cooccurs = set(map(str.lower, pri.get("StrongCooccurs", [])))
+            gateways = set(map(str.lower, pri.get("Gateways", [])))
+            NEG      = set(map(str.lower, getattr(self, "_negatives", []) or []))
 
-                    if best_i is not None and best_a > 0 and best_s > WEIGHTS["negative"]:
-                        px, py = _center(best_i)
+            WEIGHTS = {"supports": 0.6, "cooccurs": 0.4, "gateways": 0.2, "negative": 0.0}
+            ALPHA_CONF, BETA_AREA, GAMMA_BOTTOM = 0.5, 0.3, 0.2
+
+            # ★ priors 기반 폴백
+            def _fallback_via_priors():
+                nonlocal px, py
+                best_i, best_score = None, -1e9
+                best_area = -1.0
+                for i, ci in enumerate(cls_ids):
+                    name = _name(ci)
+                    if name in NEG:
+                        base = WEIGHTS["negative"]
+                    elif name in supports:
+                        base = WEIGHTS["supports"]
+                    elif name in cooccurs:
+                        base = WEIGHTS["cooccurs"]
+                    elif name in gateways:
+                        base = WEIGHTS["gateways"]
                     else:
-                        # 3) floor 최대 박스 폴백
-                        floor_set = set(map(str.lower, floor_aliases))
-                        floor_inds = [i for i, ci in enumerate(cls_ids) if _name(ci) in floor_set]
-                        top = _pick_largest(floor_inds)
+                        base = 0.0
+
+                    # ★ priors 스코어링에서도 det.confidence 사용
+                    conf = float(box_conf[i]) if box_conf is not None else 1.0
+                    score = base + ALPHA_CONF * conf + BETA_AREA * _norm_area(i) + GAMMA_BOTTOM * _bottom_bias(i)
+
+                    a = _area(i)
+                    if (score > best_score) or (np.isclose(score, best_score) and a > best_area):
+                        best_i, best_score, best_area = i, score, a
+
+                if best_i is not None and best_score > WEIGHTS["negative"]:
+                    px, py = _center(best_i)
+                    return
+
+                floor_set = set(map(str.lower, floor_aliases))
+                floor_inds = [i for i, ci in enumerate(cls_ids) if _name(ci) in floor_set]
+                if len(floor_inds) > 0:
+                    areas = [_area(i) for i in floor_inds]
+                    top = floor_inds[int(np.argmax(areas))]
+                    px, py = _center(top)
+                    return
+
+                all_areas = [_area(i) for i in range(len(cls_ids))]
+                if len(all_areas) > 0:
+                    top = int(np.argmax(all_areas))
+                    if all_areas[top] > 0:
+                        px, py = _center(top)
+
+            # ★ 타깃 확정: conf 컷오프 + lookalikes IoU 검사
+            MIN_TARGET_CONF = 0.30
+            LA_IOU_THRES    = 0.70
+            used_target = False
+
+            if goal_idx >= 0 and np.any(cls_ids == goal_idx):
+                target_inds = np.where(cls_ids == goal_idx)[0]
+
+                # ★ conf 없으면 보수적으로 타깃 확정 금지
+                if box_conf is None:
+                    target_inds = np.array([], dtype=int)
+                else:
+                    ok_mask = box_conf[target_inds] >= MIN_TARGET_CONF
+                    target_inds = target_inds[ok_mask]
+
+                if len(target_inds) > 0:
+                    top = _pick_largest(target_inds)
+                    look_inds = [k for k, ci in enumerate(cls_ids) if _name(ci) in NEG]
+
+                    # ★ lookalikes와의 IoU가 높으면 priors 폴백
+                    if top is not None and any(_iou(top, lk) >= LA_IOU_THRES for lk in look_inds):
+                        _fallback_via_priors()
+                    else:
                         if top is not None:
                             px, py = _center(top)
-                        # else 중앙 유지
+                            pri_flag = True
+                            used_target = True
 
-        # 4) 정책용 마스크(정사각형 점)
+            if not used_target and not pri_flag:
+                _fallback_via_priors()
+
+        # 정책용 마스크
         r = 8
         x1, x2 = max(0, px - r), min(W, px + r)
         y1, y2 = max(0, py - r), min(H, py + r)
         debug_mask[y1:y2, x1:x2] = 255
-        # 선택된 포인트도 같이 그리려면:
+
         cv2.drawMarker(
             vis_bgr, (px, py),
             (0, 255, 255) if not pri_flag else (0, 255, 0),
             markerType=cv2.MARKER_CROSS, markerSize=16, thickness=2
         )
-        # 반환: (이미지 BGR, 마스크 uint8, 목표발견여부), 디버깅용 이미지
+
         return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), debug_mask, pri_flag, vis_bgr
