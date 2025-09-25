@@ -1,5 +1,5 @@
 # data-collection related directory
-HABITAT_ROOT_DIR = "/home/gunminy/habitat-lab"
+HABITAT_ROOT_DIR = "/home/hslee/Developments/Tools/habitat-lab"
 HM3D_CONFIG_PATH = f"{HABITAT_ROOT_DIR}/habitat-lab/habitat/config/benchmark/nav/objectnav/objectnav_hm3d.yaml"
 MP3D_CONFIG_PATH = f"{HABITAT_ROOT_DIR}/habitat-lab/habitat/config/benchmark/nav/objectnav/objectnav_mp3d.yaml"
 SCENE_PREFIX = "./data/scene_datasets/"
