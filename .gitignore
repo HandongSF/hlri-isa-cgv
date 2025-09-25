@@ -269,3 +269,4 @@ hm3d_eval_trajectory/
 tmp/
 objnav_hm3d.csv
 data/
+constants.py
