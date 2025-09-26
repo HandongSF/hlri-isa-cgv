@@ -17,7 +17,8 @@ from gpt4v_planner import GPT4V_Planner
 from policy_agent import Policy_Agent
 from habitat.utils.visualizations.maps import colorize_draw_agent_and_fit_to_height
 from cv_utils.yoloe_tools import initialize_yoloe_model
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, open_dict
+
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 os.environ["MAGNUM_LOG"] = "quiet"
@@ -48,6 +49,18 @@ print("scenes_dir    =", habitat_config.habitat.dataset.scenes_dir)
 print("data_path     =", habitat_config.habitat.dataset.data_path)
 OmegaConf.set_readonly(habitat_config, False)
 habitat_config.habitat.environment.max_episode_steps = 600  # 예: 600스텝에서 타임아웃
+# === NEW: NumSteps 측정치 활성화 (없으면 추가) ===
+try:
+    from habitat.config.default_structured_configs import NumStepsMeasurementConfig
+    with open_dict(habitat_config.habitat.task.measurements):
+        if "num_steps" not in habitat_config.habitat.task.measurements:
+            habitat_config.habitat.task.measurements.num_steps = NumStepsMeasurementConfig()
+except Exception:
+    # 구조화 Config이 없거나 버전 차이가 있을 때 딕셔너리 방식으로 추가
+    with open_dict(habitat_config.habitat.task.measurements):
+        if "num_steps" not in habitat_config.habitat.task.measurements:
+            habitat_config.habitat.task.measurements.num_steps = {"type": "NumStepsMeasure"}
+# ================================================
 habitat_env = habitat.Env(habitat_config)
 
 # ✅ YOLOE 초기화 (세그 가중치 필수)
@@ -62,8 +75,6 @@ yoloe_model = initialize_yoloe_model(
 )
 
 # ✅ 플래너/에이전트
-#   - 플래너가 YOLOE 한 개만 받도록 바꿨다면 ↓ 그대로 사용
-#   - 여전히 (dino_model, sam_model) 2개 인자를 받는 옛 버전이라면 같은 모델을 두 번 넣는다.
 try:
     nav_planner = GPT4V_Planner(yoloe_model)
 except TypeError:
@@ -76,6 +87,22 @@ evaluation_metrics = []
 for i in tqdm(range(args.eval_episodes)):
     find_goal = False
     obs = habitat_env.reset()
+
+    # === NEW: 에피소드 총 이동거리(유클리드) 집계용 step 래핑 시작 ===
+    _stats = {
+        "dist_m": 0.0,
+        "prev": np.array(habitat_env.sim.get_agent_state().position, dtype=np.float32),
+    }
+    _orig_step = habitat_env.step
+    def _instrumented_step(action):
+        obs_ = _orig_step(action)
+        cur = np.array(habitat_env.sim.get_agent_state().position, dtype=np.float32)
+        _stats["dist_m"] += float(np.linalg.norm(cur - _stats["prev"]))
+        _stats["prev"] = cur
+        return obs_
+    habitat_env.step = _instrumented_step
+    # ===========================================================
+
     dir = "./tmp/trajectory_%d" % i
     os.makedirs(dir, exist_ok=False)
     fps_writer = imageio.get_writer("%s/fps.mp4" % dir, fps=4)
@@ -83,7 +110,6 @@ for i in tqdm(range(args.eval_episodes)):
     heading_offset = 0
     # step counters to rate-limit expensive resets
     step_counter = 0
-    last_reset_step = 0
     start_geodesic_m = float(habitat_env.get_metrics()['distance_to_goal'])  
 
     nav_planner.reset(habitat_env.current_episode.object_category)
@@ -94,7 +120,7 @@ for i in tqdm(range(args.eval_episodes)):
     episode_t0 = time.perf_counter()
 
     # a whole round planning process
-    #LLM 첫 호출 뒤 방향 정하고 줄발
+    # LLM 첫 호출 뒤 방향 정하고 출발
     for _ in range(11):
         obs = habitat_env.step(3)
         episode_images.append(obs['rgb'])
@@ -115,7 +141,6 @@ for i in tqdm(range(args.eval_episodes)):
     episode_images.append(debug_image)
     episode_images.append(debug_image)
     nav_executor.reset(goal_image, goal_mask)
-    last_reset_step = step_counter
 
     while not habitat_env.episode_over:
         action, skill_image = nav_executor.step(obs['rgb'], habitat_env.sim.previous_step_collided)
@@ -147,27 +172,45 @@ for i in tqdm(range(args.eval_episodes)):
                     episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                     heading_offset += 1
                     step_counter += 1
+            
+            if step_counter == 0 and action == 0 :
+                # 정책이 앞으로 가지 못한다고 판단할 경우 다시 VLM 호출
+                for _ in range(11):
+                    obs = habitat_env.step(3)
+                    episode_images.append(obs['rgb'])
+                    episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                    step_counter += 1
+                goal_image, goal_mask, _, debug_image, goal_rotate, goal_flag = nav_planner.make_plan(episode_images[-12:])
+                for j in range(min(11 - goal_rotate, 1 + goal_rotate)):
+                    if goal_rotate <= 6:
+                        obs = habitat_env.step(3)
+                        episode_images.append(obs['rgb'])
+                        episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                    else:
+                        obs = habitat_env.step(2)
+                        episode_images.append(obs['rgb'])
+                        episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                    step_counter += 1
+                episode_images.append(debug_image)
+                episode_images.append(debug_image)
+                nav_executor.reset(goal_image, goal_mask)
 
-            # planning with priors
-            direction_image, debug_mask, pri_flag, debug_image = nav_planner.apply_priors_on_image(obs['rgb'])
-            episode_images.append(debug_image)
-            episode_images.append(debug_image)
-            goal_image, goal_mask = direction_image, debug_mask
-            goal_flag = pri_flag  # 이후 while 루프 상단의 조건문에서 활용
-
-            #임시 무한루프 끊기
-            if step_counter == 0 and goal_flag == False :
-                goal_flag = True
+            else :
+                # planning with priors
+                direction_image, debug_mask, pri_flag, debug_image = nav_planner.apply_priors_on_image(obs['rgb'])
+                episode_images.append(debug_image)
+                episode_images.append(debug_image)
+                goal_image, goal_mask = direction_image, debug_mask
+                goal_flag = pri_flag  # 이후 while 루프 상단의 조건문에서 활용
 
             print("action", action)
             print("goal _flag", goal_flag)
             print("step_counter", step_counter)
             step_counter = 0
-            #action이 0이고 goal_flag가 false이면 웨이포인트를 새로 지정해야 하지만
-            #웨이포인트를 지정하자마자 action이 0이 되는 경우 반복적인 pixnav정책 호출이 일어날 수 있음.
-            # PixelNav reset (새 웨이포인트 반영) 
-            nav_executor.reset(goal_image, goal_mask)
+            nav_executor.reset(goal_image, goal_mask)  # PixelNav reset (새 웨이포인트 반영) 
 
+    # === NEW: 래핑 원복(중첩 방지) ===
+    habitat_env.step = _orig_step
 
     # ====== ⏱️ 에피소드 '계산' 시간 측정 종료 ======
     episode_t1 = time.perf_counter()
@@ -189,6 +232,10 @@ for i in tqdm(range(args.eval_episodes)):
         'llm_calls': int(nav_planner.llm_call_count),
         'llm_avg_time_sec': float(np.mean(nav_planner.llm_durations)) if len(nav_planner.llm_durations) > 0 else 0.0,
         'episode_time_sec': float(episode_time_sec),  # ✅ 에피소드 총 계산 시간(초)
+
+        # === NEW: 추가 지표 ===
+        'num_steps': int(habitat_env.get_metrics().get('num_steps', 0)),  # Habitat 빌트인 스텝 수
+        'total_distance_m': float(_stats['dist_m']),                      # 유클리드 총 이동거리(m)
     })
 
     write_metrics(evaluation_metrics)

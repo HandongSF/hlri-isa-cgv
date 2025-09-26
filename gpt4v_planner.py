@@ -63,7 +63,7 @@ class GPT4V_Planner:
     def reset(self,object_goal):
         # translation to align for the detection model
         if object_goal == 'tv_monitor':
-            self.object_goal = 'black screen'
+            self.object_goal = 'tv'
         else:
             self.object_goal = object_goal
 
@@ -126,7 +126,7 @@ class GPT4V_Planner:
         #    - 이 함수가 YOLOE 박스 → priors 스코어링 → 바닥 폴백까지 수행
         goal_image_bgr, debug_mask, pri_flag, vis_bgr = self.apply_priors_on_image(
             image=direction_image,
-            conf_threshold=0.25,
+            conf_threshold=0.20,
             iou_threshold=0.50,
         )
 
@@ -159,16 +159,9 @@ class GPT4V_Planner:
         gateways   = set(map(str.lower, (priors or {}).get("Gateways", []) or []))
         lookalikes = set(map(str.lower, (priors or {}).get("Lookalikes", []) or []))
 
-        # Scene→Object 힌트 평탄화
-        hint_objs = []
-        hints = (priors or {}).get("SceneToObjectHints", {}) or {}
-        for objs in hints.values():
-            hint_objs.extend(list(map(str.lower, objs or [])))
-        hint_set = set(hint_objs)
-
         # 모든 priors (lookalikes 포함)을 YOLOE 클래스셋에 포함
         extra_positive = sorted(
-            supports | cooccurs | gateways | lookalikes | hint_set | set(floor_aliases)
+            supports | cooccurs | gateways | lookalikes | set(floor_aliases)
         )
         prompt_classes = list(dict.fromkeys(self.detect_objects + extra_positive))
 
@@ -256,7 +249,7 @@ class GPT4V_Planner:
 
 
     def apply_priors_on_image(self, image: np.ndarray,
-                            conf_threshold: float = 0.25,
+                            conf_threshold: float = 0.20,
                             iou_threshold: float = 0.50):
         # 프롬프트/클래스셋 확보
         prompt_classes = getattr(self, "_prompt_classes", None)
@@ -353,13 +346,13 @@ class GPT4V_Planner:
 
             # priors 집합
             pri = self.latest_priors or {"Supports": [], "StrongCooccurs": [], "Gateways": [],
-                                        "Lookalikes": [], "SceneToObjectHints": {}}
+                                        "Lookalikes": []}
             supports = set(map(str.lower, pri.get("Supports", [])))
             cooccurs = set(map(str.lower, pri.get("StrongCooccurs", [])))
             gateways = set(map(str.lower, pri.get("Gateways", [])))
             NEG      = set(map(str.lower, getattr(self, "_negatives", []) or []))
 
-            WEIGHTS = {"supports": 0.6, "cooccurs": 0.4, "gateways": 0.2, "negative": 0.0}
+            WEIGHTS = {"supports": 0.6, "cooccurs": 0.2, "gateways": 0.4, "negative": 0.0}
             ALPHA_CONF, BETA_AREA, GAMMA_BOTTOM = 0.5, 0.3, 0.2
 
             # ★ priors 기반 폴백
@@ -399,15 +392,9 @@ class GPT4V_Planner:
                     top = floor_inds[int(np.argmax(areas))]
                     px, py = _center(top)
                     return
-
-                all_areas = [_area(i) for i in range(len(cls_ids))]
-                if len(all_areas) > 0:
-                    top = int(np.argmax(all_areas))
-                    if all_areas[top] > 0:
-                        px, py = _center(top)
-
+                
             # ★ 타깃 확정: conf 컷오프 + lookalikes IoU 검사
-            MIN_TARGET_CONF = 0.30
+            MIN_TARGET_CONF = 0.25
             LA_IOU_THRES    = 0.70
             used_target = False
 

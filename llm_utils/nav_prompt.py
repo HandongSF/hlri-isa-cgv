@@ -14,11 +14,10 @@ RULES
 7) If the target clearly appears in any sub-view, set "Flag": true, else false.
 
 CATEGORIES
-- "Supports": objects/fixtures that physically support/mount/hold/enclose the target.
-- "StrongCooccurs": nearby objects frequently co-existing around the target.
-- "Gateways": structures guiding movement toward areas likely containing the target. You must include "doorway", "hallway", "corridor".
-- "Lookalikes": objects causing false positives due to similar appearance.
-- "SceneToObjectHints": room-type → characteristic objects lists (scene-level priors).
+- "Supports": structures/furniture that directly hold, mount, or enclose the target (e.g., stand, shelf, wall mount).
+- "StrongCooccurs": nearby objects frequently co-existing with the target (e.g., sofa near tv, pillow near bed).
+- "Gateways": entrances or passages guiding movement toward spaces likely containing the target. Always include "doorway", "hallway", "corridor". Also consider "bathroom doorway", "kitchen doorway", "bedroom doorway", "stairway".
+- "Lookalikes": visually similar objects that may cause false detections (e.g., mirror for tv, trash bin for plant).
 
 LENGTH LIMITS
 - "Reason": <= 30 words about navigability and cues.
@@ -30,25 +29,9 @@ Output (one-line JSON):
   "Angle": <int>,
   "Flag": <true|false>,
 
-  "Supports":           [ ... up to 4 ... ],
-  "StrongCooccurs":     [ ... up to 4 ... ],
+  "Supports":           [ ... up to 4... ],
+  "StrongCooccurs":     [ ... up to 8 ... ],
   "Gateways":           [ ... at least 4, up to 8 ... ],
-  "Lookalikes":         [ ... at least 4, up to 8 ... ],
-
-  "SceneToObjectHints": {
-    "living room": ["sofa","coffee table","floor lamp","curtain","tv stand","bookshelf","rug","power outlet"],
-    "kitchen":     ["refrigerator","oven","sink","cabinet","microwave","stove","range hood","kitchen island"],
-    "bathroom":    ["toilet","sink","towel rack","shower curtain","mirror","toilet paper","soap dispenser","bath mat"],
-    "corridor":    ["door","doorway","exit sign","fire extinguisher","handrail","wall light","signage","mailbox"],
-    "bedroom":     ["bed","nightstand","wardrobe","dresser","table lamp","closet","mirror","curtain"],
-    "office":      ["desk","office chair","computer","monitor","bookshelf","printer","cabinet","power outlet"],
-    "dining room": ["dining table","chair","sideboard","pendant light","cabinet","tableware","rug","curtain"],
-    "laundry":     ["washing machine","dryer","detergent shelf","laundry basket","sink","cabinet","hanger","ironing board"],
-    "garage":      ["car","tool rack","storage shelf","workbench","cabinet","bicycle","ladder","power outlet"],
-    "lobby":       ["reception desk","sofa","plant","signage","mailbox","bench","display case","floor mat"],
-    "elevator hall":["elevator","call button","floor indicator","signage","mirror","handrail","camera","wall light"],
-    "staircase":   ["steps","handrail","landing","signage","wall light","emergency light","exit sign","camera"],
-    "storage":     ["shelf","box","cabinet","rack","ladder","trolley","label","light switch"]
-  }
+  "Lookalikes":         [ ... up to 8 ... ]
 }
 """
