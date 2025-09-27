@@ -142,6 +142,7 @@ for i in tqdm(range(args.eval_episodes)):
     episode_images.append(debug_image)
     nav_executor.reset(goal_image, goal_mask)
 
+
     while not habitat_env.episode_over:
         action, skill_image = nav_executor.step(obs['rgb'], habitat_env.sim.previous_step_collided)
         if action != 0 or goal_flag:
@@ -153,6 +154,19 @@ for i in tqdm(range(args.eval_episodes)):
             episode_images.append(obs['rgb'])
             episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
             step_counter += 1
+            #웨이포인트 따라가는 중, 목표물을 봤다면 다시 웨이포인트 지정 후 목표물까지 이동!
+            if nav_planner.obs_goal_object(obs['rgb']) and goal_flag == False: 
+                direction_image, debug_mask, pri_flag, debug_image = nav_planner.apply_priors_on_image(obs['rgb'])
+                episode_images.append(debug_image)
+                episode_images.append(debug_image)
+                goal_image, goal_mask = direction_image, debug_mask
+                goal_flag = pri_flag  # 이후 while 루프 상단의 조건문에서 활용
+                print("action", action)
+                print("goal _flag", goal_flag)
+                print("step_counter", step_counter)
+                step_counter = 0
+                nav_executor.reset(goal_image, goal_mask)  # PixelNav reset (새 웨이포인트 반영) 
+
         else:
             if habitat_env.episode_over:
                 break

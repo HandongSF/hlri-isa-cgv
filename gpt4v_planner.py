@@ -437,3 +437,46 @@ class GPT4V_Planner:
         )
 
         return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), debug_mask, pri_flag, vis_bgr
+    
+    def obs_goal_object(self,
+                        image: np.ndarray,
+                        conf_threshold: float = 0.6,
+                        iou_threshold: float = 0.50) -> bool:
+        """
+        현재 object_goal의 존재 여부만 간단히 판정.
+        - YOLOE box_threshold=conf_threshold로 필터링된 결과에서
+          목표 클래스가 1개 이상 있으면 True, 없으면 False.
+        - IoU 기반 추가 판정은 하지 않음(간단/빠른 체크).
+        """
+        # 클래스셋 보장(priors 반영)
+        prompt_classes = getattr(self, "_prompt_classes", None)
+        if not prompt_classes:
+            self._set_prompt_from_priors(self.latest_priors or {})
+            prompt_classes = self._prompt_classes
+
+        goal_name = getattr(self, "object_goal", "") or ""
+        try:
+            goal_idx = prompt_classes.index(goal_name)
+        except ValueError:
+            # 현재 프롬프트 클래스에 목표가 없다면 탐지 불가
+            return False
+
+        # YOLOE 탐지 (세그 OFF, NMS는 내부에서 iou_threshold 사용)
+        det = yoloe_detection(
+            image=image,
+            target_classes=prompt_classes,
+            model=self.yoloe_model,
+            box_threshold=conf_threshold,
+            iou_threshold=iou_threshold,
+            run_extra_nms=False,
+            use_text_prompt=False,
+            retina_masks=False,
+        )
+
+        cls_ids = getattr(det, "class_id", None)
+        if cls_ids is None or len(cls_ids) == 0:
+            return False
+
+        cls_ids = np.asarray(cls_ids).astype(int)
+        # box_threshold에서 이미 컷이 되었으므로 신뢰도 배열이 없어도 OK
+        return bool(np.any(cls_ids == goal_idx))

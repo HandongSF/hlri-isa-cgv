@@ -16,7 +16,7 @@ RULES
 CATEGORIES
 - "Supports": structures/furniture that directly hold, mount, or enclose the target (e.g., stand, shelf, wall mount).
 - "StrongCooccurs": nearby objects frequently co-existing with the target (e.g., sofa near tv, pillow near bed).
-- "Gateways": entrances or passages guiding movement toward spaces likely containing the target. Always include "doorway", "hallway", "corridor". Also consider "bathroom doorway", "kitchen doorway", "bedroom doorway", "stairway".
+- "Gateways": entrances or passages guiding movement toward spaces likely containing the target. Always include "doorway", "hallway", "corridor". Also consider "bathroom doorway", "kitchen doorway", "bedroom doorway".
 - "Lookalikes": visually similar objects that may cause false detections (e.g., mirror for tv, trash bin for plant).
 
 LENGTH LIMITS
