@@ -37,8 +37,6 @@ def adjust_topdown(metrics):
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--eval_episodes", type=int, default=200)
-    # How often to call nav_executor.reset within a running episode (in env steps)
-    parser.add_argument("--reset_interval", type=int, default=10)
     return parser.parse_known_args()[0]
 
 
@@ -70,7 +68,7 @@ yoloe_model = initialize_yoloe_model(
     device="cuda:0",
     classes=DETECT_OBJECTS,       # 텍스트 프롬프트 기본 세팅
     prompt_mode="text",
-    conf_threshold=0.10,
+    conf_threshold=0.20,
     iou_threshold=0.50,
 )
 
@@ -230,9 +228,19 @@ for i in tqdm(range(args.eval_episodes)):
     episode_t1 = time.perf_counter()
     episode_time_sec = episode_t1 - episode_t0
 
-    for image, topdown in zip(episode_images, episode_topdowns):
-        fps_writer.append_data(image)
-        topdown_writer.append_data(topdown)
+
+    # --- 서로 길이 다르게, 각각 독립적으로 쓰기 ---
+    for img in episode_images:
+        # 필요시: img = img.astype(np.uint8)
+        fps_writer.append_data(img)
+
+    for top in episode_topdowns:
+        # 필요시: top = top.astype(np.uint8)
+        topdown_writer.append_data(top)
+
+    fps_writer.close()
+    topdown_writer.close()
+
     fps_writer.close()
     topdown_writer.close()
 
