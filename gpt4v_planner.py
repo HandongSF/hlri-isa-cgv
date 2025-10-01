@@ -1,6 +1,6 @@
 import numpy as np
-from llm_utils.gpt_request import gptv_response, gpt_response 
-from llm_utils.nav_prompt import GPT4V_PROMPT, PRIORS_PROMPT
+from llm_utils.gpt_request_ollama import gptv_response, gpt_response 
+from llm_utils.nav_prompt import GPT4V_PROMPT, PRIORS_PROMPT, PRIOR_CLASS_LIST
 from llm_utils.priors_parser import parse_llm_json, extract_priors, parse_decision_json
 from cv_utils.yoloe_tools import *
 import cv2
@@ -202,7 +202,7 @@ class GPT4V_Planner:
             t0 = time.perf_counter()
             try:
                 # 이미지 없이 텍스트 전용 호출
-                raw_answer = gpt_response(text_content, system_prompt=PRIORS_PROMPT)
+                raw_answer = gpt_response(text_content, system_prompt=PRIORS_PROMPT + PRIOR_CLASS_LIST)
             except Exception:
                 raw_answer = None
             finally:
