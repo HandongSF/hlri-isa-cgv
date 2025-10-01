@@ -117,6 +117,9 @@ for i in tqdm(range(args.eval_episodes)):
     # ====== ⏱️ 에피소드 '계산' 시간 측정 시작 (비디오 I/O 제외) ======
     episode_t0 = time.perf_counter()
 
+    # === 첫 호출 후 Priors 적용
+    nav_planner.query_priors_text()
+
     # a whole round planning process
     # LLM 첫 호출 뒤 방향 정하고 출발
     for _ in range(11):
@@ -188,12 +191,14 @@ for i in tqdm(range(args.eval_episodes)):
             if step_counter == 0 and action == 0 :
                 # 정책이 앞으로 가지 못한다고 판단할 경우 다시 VLM 호출
                 for _ in range(11):
+                    if habitat_env.episode_over: break
                     obs = habitat_env.step(3)
                     episode_images.append(obs['rgb'])
                     episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                     step_counter += 1
                 goal_image, goal_mask, _, debug_image, goal_rotate, goal_flag = nav_planner.make_plan(episode_images[-12:])
                 for j in range(min(11 - goal_rotate, 1 + goal_rotate)):
+                    if habitat_env.episode_over: break
                     if goal_rotate <= 6:
                         obs = habitat_env.step(3)
                         episode_images.append(obs['rgb'])
@@ -237,9 +242,6 @@ for i in tqdm(range(args.eval_episodes)):
     for top in episode_topdowns:
         # 필요시: top = top.astype(np.uint8)
         topdown_writer.append_data(top)
-
-    fps_writer.close()
-    topdown_writer.close()
 
     fps_writer.close()
     topdown_writer.close()

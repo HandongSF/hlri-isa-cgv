@@ -1,7 +1,7 @@
 import numpy as np
-from llm_utils.gpt_request import gptv_response
-from llm_utils.nav_prompt import GPT4V_PROMPT
-from llm_utils.priors_parser import parse_llm_json, extract_priors
+from llm_utils.gpt_request import gptv_response, gpt_response 
+from llm_utils.nav_prompt import GPT4V_PROMPT, PRIORS_PROMPT
+from llm_utils.priors_parser import parse_llm_json, extract_priors, parse_decision_json
 from cv_utils.yoloe_tools import *
 import cv2
 import time  # <-- 추가
@@ -177,12 +177,105 @@ class GPT4V_Planner:
         self._prompt_classes = prompt_classes
         self._floor_aliases = floor_aliases
 
+    def query_priors_text(self):
+        """
+        이미지 없이 텍스트만으로 PRIORS를 받아온다.
+        - 시스템 프롬프트: PRIORS_PROMPT
+        - 유저 프롬프트: "<Target Object>:<name>"
+        - 쿼리 시도: 10회
+        반환: 표준 priors(dict)
+            {
+            "Supports": [...],
+            "StrongCooccurs": [...],
+            "Gateways": [...],
+            "Lookalikes": [...]
+            }
+        """
+        text_content = "<Target Object>:{}\n".format(self.object_goal)
+        # (선택) 트래젝토리 로그에 입력 기록
+        self.gptv_trajectory.append("\nInput(priors):\n%s \n" % text_content)
+
+        raw_answer = None
+        priors = None
+
+        for try_idx in range(10):
+            t0 = time.perf_counter()
+            try:
+                # 이미지 없이 텍스트 전용 호출
+                raw_answer = gpt_response(text_content, system_prompt=PRIORS_PROMPT)
+            except Exception:
+                raw_answer = None
+            finally:
+                self.llm_call_count += 1
+                self.llm_durations.append(time.perf_counter() - t0)
+
+            if not raw_answer:
+                continue
+
+            # priors 전용 파서 (각도/플래그/리즌 미사용)
+            parsed = None
+            try:
+                parsed = parse_llm_json(raw_answer)  # alias: priors만 반환
+            except Exception:
+                parsed = None
+            if not parsed:
+                continue
+
+            # 표준 PRIORS 딕셔너리만 추출
+            priors = extract_priors(parsed, raw_answer) or {}
+
+            # 키 보장
+            for k in ("Supports", "StrongCooccurs", "Gateways", "Lookalikes"):
+                priors.setdefault(k, [])
+
+            # 내부 로그(원하면 파일 저장 훅도 사용 가능)
+            snapshot = {
+                "target": self.object_goal,
+                "priors": priors,
+                "raw": raw_answer,
+                "call_index": try_idx,
+                "call_type": "text_priors",
+            }
+            self.priors_log.append(snapshot)
+            # self._dump_llm_call(snapshot)  # 주석 해제 시 파일로도 저장
+
+            print("[LLM/PRIORS] sizes:",
+                len(priors.get("Supports", [])),
+                len(priors.get("StrongCooccurs", [])),
+                len(priors.get("Gateways", [])),
+                len(priors.get("Lookalikes", [])))
+            break  # 성공 시도 종료
+
+        # 실패 시 안전 디폴트
+        if not isinstance(priors, dict):
+            priors = {
+                "Supports": [],
+                "StrongCooccurs": [],
+                "Gateways": [],
+                "Lookalikes": [],
+            }
+
+        # 상태 업데이트 + YOLOE 클래스셋 적용
+        self.latest_priors = priors
+        self._set_prompt_from_priors(priors)
+
+        # (선택) 응답 원문도 트래젝토리에 남김
+        self.gptv_trajectory.append("PRIORS Answer:\n%s" % (raw_answer if raw_answer is not None else "<EMPTY>"))
+
+        return priors
+
 
     def query_gpt4v(self, pano_images):
+        """
+        LLM에서 Reason/Angle/Flag만 받아와 진행 방향을 정한다.
+        priors는 사용/저장하지 않는다.
+        """
         angles = (np.arange(len(pano_images))) * 30
         inference_image = cv2.cvtColor(self.concat_panoramic(pano_images, angles), cv2.COLOR_BGR2RGB)
 
+        # (옵션) 기록용 저장
         cv2.imwrite("monitor-panoramic.jpg", inference_image)
+
         text_content = "<Target Object>:{}\n".format(self.object_goal)
         self.gptv_trajectory.append("\nInput:\n%s \n" % text_content)
         self.panoramic_trajectory.append(inference_image)
@@ -190,9 +283,21 @@ class GPT4V_Planner:
         raw_answer = None
         parsed = None
 
-        for _ in range(10):
+        def _to_bool(x):
+            if isinstance(x, bool):
+                return x
+            if isinstance(x, (int, float)):
+                return x != 0
+            if isinstance(x, str):
+                return x.strip().lower() in ("true", "1", "yes", "y", "t")
+            return False
+
+        valid_angles = set(int(x) for x in angles.tolist())
+
+        for try_idx in range(10):
             t0 = time.perf_counter()
             try:
+                # ⚠️ GPT4V_PROMPT는 시스템프롬프트로 들어간다고 가정
                 raw_answer = gptv_response(text_content, inference_image, GPT4V_PROMPT)
             except Exception:
                 raw_answer = None
@@ -203,47 +308,48 @@ class GPT4V_Planner:
             if not raw_answer:
                 continue
 
-            # ✅ angle/priors만 안정적으로 파싱
-            parsed = parse_llm_json(raw_answer, valid_angles=list(map(int, angles.tolist())))
+            # Reason/Angle/Flag만 파싱
+            parsed = parse_decision_json(raw_answer, valid_angles=list(valid_angles))
             if not parsed:
                 continue
 
-            # angle 확인
+            # Angle 검증
             try:
-                a = int(parsed["Angle"])
+                a = int(parsed.get("Angle"))
             except Exception:
                 a = None
-
-            if a is None or a not in set(int(x) for x in angles):
+            if a is None or a not in valid_angles:
                 continue
 
-            # ✅ priors 표준 형태로 추출 & 저장
-            priors = extract_priors(parsed, raw_answer)
+            # Flag 안정 변환
+            flag = _to_bool(parsed.get("Flag", False))
+            reason = parsed.get("Reason", "")
 
+            # (선택) 호출 로그 저장 — priors는 비움
             snapshot = {
                 "target": self.object_goal,
                 "angles": list(map(int, angles.tolist())) if hasattr(angles, "tolist") else list(angles),
                 "selected_angle": int(a),
-                "priors": priors,
+                "flag": bool(flag),
+                "reason": reason,
                 "raw": raw_answer,
+                "call_index": try_idx,
             }
-            self.priors_log.append(snapshot)
-            self.latest_priors = priors
-            print("Priors: ", priors)
-            print("[LLM] angle:", a)
-            print("[LLM] supports/cooccurs/gateways/lookalikes sizes:",
-                len(priors.get("Supports", [])),
-                len(priors.get("StrongCooccurs", [])),
-                len(priors.get("Gateways", [])),
-                len(priors.get("Lookalikes", [])))
-            break  # 성공 조건
+
+            # 파일로 남기고 싶으면 주석 해제
+            # self._dump_llm_call(snapshot)
+
+            print("[LLM] angle:", a, "| flag:", flag)
+            if reason:
+                print("[LLM] reason:", reason)
+            break  # 성공
 
         self.gptv_trajectory.append("GPT-4V Answer:\n%s" % (raw_answer if raw_answer is not None else "<EMPTY>"))
         self.panoramic_trajectory.append(inference_image)
 
         try:
-            idx = (int(parsed['Angle'] // 30)) % max(1, len(pano_images))
-            return idx, bool(parsed.get('Flag', False))
+            idx = (int(parsed['Angle']) // 30) % max(1, len(pano_images))
+            return idx, _to_bool(parsed.get('Flag', False))
         except Exception:
             return np.random.randint(0, max(1, len(pano_images))), False
 
@@ -352,7 +458,7 @@ class GPT4V_Planner:
             gateways = set(map(str.lower, pri.get("Gateways", [])))
             NEG      = set(map(str.lower, getattr(self, "_negatives", []) or []))
 
-            WEIGHTS = {"supports": 0.6, "cooccurs": 0.2, "gateways": 0.4, "negative": 0.0}
+            WEIGHTS = {"supports": 0.4, "cooccurs": 0.2, "gateways": 0.4, "negative": 0.0}
             ALPHA_CONF, BETA_AREA, GAMMA_BOTTOM = 0.5, 0.3, 0.2
 
             # ★ priors 기반 폴백
@@ -394,8 +500,8 @@ class GPT4V_Planner:
                     return
                 
             # ★ 타깃 확정: conf 컷오프 + lookalikes IoU 검사
-            MIN_TARGET_CONF = 0.25
-            LA_IOU_THRES    = 0.70
+            MIN_TARGET_CONF = 0.3
+            LA_IOU_THRES    = 0.50
             used_target = False
 
             if goal_idx >= 0 and np.any(cls_ids == goal_idx):
@@ -440,7 +546,7 @@ class GPT4V_Planner:
     
     def obs_goal_object(self,
                         image: np.ndarray,
-                        conf_threshold: float = 0.6,
+                        conf_threshold: float = 0.30,
                         iou_threshold: float = 0.50) -> bool:
         """
         현재 object_goal의 존재 여부만 간단히 판정.
