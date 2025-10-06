@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import argparse
-import math
 import sys
 
 try:
@@ -46,16 +45,16 @@ def compute_metrics(df):
     total_steps = float(df["num_steps"].sum())
     total_calls = float(df["llm_calls"].sum())
 
-    calls_per_m = total_calls / max(total_dist, eps)        # 미터 당 LLM 호출 수 (micro)
-    speed_mps   = total_dist  / max(total_time, eps)        # 이동 속도 m/s (micro)
-    steps_per_s = total_steps / max(total_time, eps)        # 초당 스텝 수 step/s (micro)
+    calls_per_m     = total_calls / max(total_dist, eps)   # 미터 당 LLM 호출 수 (calls/m)
+    sec_per_meter   = total_time  / max(total_dist, eps)   # 미터당 연산 시간 (s/m)
+    sec_per_step    = total_time  / max(total_steps, eps)  # 스텝 당 연산 시간 (s/step)
 
     return {
         "SR": sr,
         "SPL_success_avg": spl_success_avg,
         "calls_per_meter": calls_per_m,
-        "speed_mps": speed_mps,
-        "steps_per_second": steps_per_s,
+        "sec_per_meter": sec_per_meter,
+        "sec_per_step": sec_per_step,
         "N_episodes": int(len(df)),
         "N_success": int(df["success"].sum()),
     }
@@ -74,8 +73,8 @@ def main():
     print(f"SR                       : {metrics['SR']:.4f}")
     print(f"SPL (성공 에피 평균)     : {metrics['SPL_success_avg']:.4f}")
     print(f"LLM calls per meter      : {metrics['calls_per_meter']:.4f} calls/m")
-    print(f"Speed                    : {metrics['speed_mps']:.5f} m/s")
-    print(f"Steps per second         : {metrics['steps_per_second']:.4f} step/s")
+    print(f"미터당 연산 시간          : {metrics['sec_per_meter']:.5f} s/m")
+    print(f"스텝 당 연산 시간         : {metrics['sec_per_step']:.5f} s/step")
 
 if __name__ == "__main__":
     main()
