@@ -3,11 +3,13 @@ from llm_utils.gpt_request import gptv_response, gpt_response
 from llm_utils.nav_prompt import GPT4V_PROMPT, PRIORS_PROMPT, PRIOR_CLASS_LIST
 from llm_utils.priors_parser import parse_llm_json, extract_priors, parse_decision_json
 from cv_utils.yoloe_tools import *
+from typing import List, Dict, Any, Tuple, Optional, Union
 import cv2
 import time  # <-- 추가
 # 변경/추가 import
 import os   # NEW
 import json # NEW
+import math
 
 
 class GPT4V_Planner:
@@ -126,8 +128,6 @@ class GPT4V_Planner:
         #    - 이 함수가 YOLOE 박스 → priors 스코어링 → 바닥 폴백까지 수행
         goal_image_bgr, debug_mask, pri_flag, vis_bgr = self.apply_priors_on_image(
             image=direction_image,
-            conf_threshold=0.20,
-            iou_threshold=0.50,
         )
 
         # 4) 디버그용: 원본 RGB 프레임에 선택 포인트(마스크 중심) 표시
@@ -355,7 +355,7 @@ class GPT4V_Planner:
 
 
     def apply_priors_on_image(self, image: np.ndarray,
-                            conf_threshold: float = 0.20,
+                            conf_threshold: float = 0.10,
                             iou_threshold: float = 0.50,
                             return_boxes: bool = False):  # ★ 추가
         # 프롬프트/클래스셋 확보
@@ -489,7 +489,7 @@ class GPT4V_Planner:
             NEG      = set(map(str.lower, getattr(self, "_negatives", []) or []))
 
             WEIGHTS = {"supports": 0.4, "cooccurs": 0.2, "gateways": 0.4, "negative": 0.0}
-            ALPHA_CONF, BETA_AREA, GAMMA_BOTTOM = 0.5, 0.3, 0.2
+            ALPHA_CONF, BETA_AREA, GAMMA_BOTTOM = 0.1, 0.2, 0.3
 
             def _fallback_via_priors():
                 nonlocal px, py
@@ -618,3 +618,124 @@ class GPT4V_Planner:
         cls_ids = np.asarray(cls_ids).astype(int)
         # box_threshold에서 이미 컷이 되었으므로 신뢰도 배열이 없어도 OK
         return bool(np.any(cls_ids == goal_idx))
+
+    def are_bboxes_similar(
+        self,
+        prev_boxes: List[Dict[str, Any]],
+        curr_boxes: List[Dict[str, Any]],
+        *,
+        iou_thresh: float = 0.85,
+        center_tol: float = 0.01,
+        area_tol: float = 0.10,
+        min_match_ratio: float = 0.95,
+        class_sensitive: bool = True,
+        ignore_classes: Optional[List[str]] = None, 
+        max_count_delta: int = 0,
+        return_detail: bool = False,
+    ) -> Union[bool, Tuple[bool, Dict[str, Any]]]: 
+        
+
+        ignore_set = set([c.lower() for c in (ignore_classes or [])])
+        MIN_CONF = 0.0  # 필요 시 0.2~0.3으로 올리세요.
+
+        def _ok(b):
+            # ★ 버그 수정: cx만 두 번 보던 문제 → cx, cy, area 모두 확인
+            if not (b and ("bbox_xyxy" in b) and ("norm" in b)):
+                return False
+            n = b["norm"]
+            return all(k in n for k in ("cx", "cy", "area"))
+
+        def _cls_name(b):
+            # ★ 클래스 이름 없으면 cls_id로 폴백
+            c = b.get("cls")
+            if c is None:
+                cid = b.get("cls_id")
+                c = str(cid) if cid is not None else None
+            return str(c).lower() if c is not None else None
+
+        def _iou_xyxy(a, b) -> float:
+            ax1, ay1, ax2, ay2 = map(float, a["bbox_xyxy"])
+            bx1, by1, bx2, by2 = map(float, b["bbox_xyxy"])
+            ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+            ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+            iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+            inter = iw * ih
+            area_a = max(0.0, (ax2 - ax1)) * max(0.0, (ay2 - ay1))
+            area_b = max(0.0, (bx2 - bx1)) * max(0.0, (by2 - by1))
+            union = area_a + area_b - inter + 1e-9
+            return inter / union
+
+        def _center_dist(a, b) -> float:
+            dx = float(a["norm"]["cx"]) - float(b["norm"]["cx"])
+            dy = float(a["norm"]["cy"]) - float(b["norm"]["cy"])
+            return math.hypot(dx, dy)
+
+        def _area_change(a, b) -> float:
+            aa = max(1e-9, float(a["norm"]["area"]))
+            bb = max(1e-9, float(b["norm"]["area"]))
+            return abs(aa - bb) / max(aa, bb)
+
+        # --- 유효 / 필터링 ---
+        def _filter(v):
+            out = []
+            for b in (v or []):
+                if not _ok(b):
+                    continue
+                if _cls_name(b) in ignore_set:
+                    continue
+                sc = b.get("score", None)
+                if (sc is not None) and (sc < MIN_CONF):
+                    continue
+                out.append(b)
+            return out
+
+        prev = _filter(prev_boxes)
+        curr = _filter(curr_boxes)
+
+        n_prev, n_curr = len(prev), len(curr)
+        detail = {"n_prev": n_prev, "n_curr": n_curr, "matched": 0, "pairs": [], "reason": ""}
+
+        if n_prev == 0 and n_curr == 0:
+            return (True, {**detail, "reason": "both empty"}) if return_detail else True
+        if n_prev == 0 or n_curr == 0:
+            return (False, {**detail, "reason": "one side empty"}) if return_detail else False
+        if abs(n_prev - n_curr) > max_count_delta:
+            return (False, {**detail, "reason": "count delta too large"}) if return_detail else False
+
+        # --- 후보 페어 만들기: 싼 검사(center, area) 먼저 → 통과 시 IoU 계산 ---
+        candidates = []
+        for i, pb in enumerate(prev):
+            pn = _cls_name(pb)
+            for j, cb in enumerate(curr):
+                if class_sensitive:
+                    cn = _cls_name(cb)
+                    if (pn is None) or (cn is None) or (pn != cn):
+                        continue
+                cdist = _center_dist(pb, cb)
+                if cdist > center_tol:
+                    continue
+                adiff = _area_change(pb, cb)
+                if adiff > area_tol:
+                    continue
+                iou = _iou_xyxy(pb, cb)
+                if iou >= iou_thresh:
+                    candidates.append((iou, i, j, cdist, adiff))
+
+        # --- 그리디 매칭 (IoU 내림차순) ---
+        candidates.sort(key=lambda x: -x[0])
+        used_prev, used_curr = set(), set()
+        for iou, i, j, cdist, adiff in candidates:
+            if i in used_prev or j in used_curr:
+                continue
+            used_prev.add(i); used_curr.add(j)
+            detail["pairs"].append((i, j, float(iou), float(cdist), float(adiff)))
+
+        matched = len(detail["pairs"])
+        detail["matched"] = matched
+        denom = max(n_prev, n_curr)
+        ratio = matched / max(1, denom)
+        similar = ratio >= min_match_ratio
+        detail["match_ratio"] = float(ratio)
+        detail["reason"] = "ok" if similar else "low match ratio"
+
+        return (similar, detail) if return_detail else similar

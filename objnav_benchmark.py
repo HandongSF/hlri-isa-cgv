@@ -45,9 +45,7 @@ habitat_config = hm3d_config(stage='val', episodes=args.eval_episodes)
 print("scene_dataset =", habitat_config.habitat.simulator.scene_dataset)
 print("scenes_dir    =", habitat_config.habitat.dataset.scenes_dir)
 print("data_path     =", habitat_config.habitat.dataset.data_path)
-OmegaConf.set_readonly(habitat_config, False)
-habitat_config.habitat.environment.max_episode_steps = 600  # 예: 600스텝에서 타임아웃
-# === NEW: NumSteps 측정치 활성화 (없으면 추가) ===
+
 try:
     from habitat.config.default_structured_configs import NumStepsMeasurementConfig
     with open_dict(habitat_config.habitat.task.measurements):
@@ -68,8 +66,6 @@ yoloe_model = initialize_yoloe_model(
     device="cuda:0",
     classes=DETECT_OBJECTS,       # 텍스트 프롬프트 기본 세팅
     prompt_mode="text",
-    conf_threshold=0.20,
-    iou_threshold=0.50,
 )
 
 # ✅ 플래너/에이전트
@@ -109,6 +105,8 @@ for i in tqdm(range(args.eval_episodes)):
     # step counters to rate-limit expensive resets
     step_counter = 0
     start_geodesic_m = float(habitat_env.get_metrics()['distance_to_goal'])  
+    prev_boxes = None
+    curr_boxes = None
 
     nav_planner.reset(habitat_env.current_episode.object_category)
     episode_images = [obs['rgb']]
@@ -206,43 +204,60 @@ for i in tqdm(range(args.eval_episodes)):
                     heading_offset += 1
                     step_counter += 1
             
-            if step_counter == 0 and action == 0 :
-                # 정책이 앞으로 가지 못한다고 판단할 경우 다시 VLM 호출
+            prev_boxes = getattr(nav_planner, "_last_bboxes", []) if prev_boxes is None else prev_boxes
+            direction_image, debug_mask, pri_flag, debug_image, curr_boxes = \
+                nav_planner.apply_priors_on_image(obs['rgb'], return_boxes=True)
+            episode_images.append(debug_image); episode_images.append(debug_image)
+
+            if nav_planner.are_bboxes_similar(
+                prev_boxes, curr_boxes,
+                iou_thresh=0.85, center_tol=0.01, area_tol=0.10,   # 엄격 프리셋(원하면 조정)
+                min_match_ratio=0.95,
+                class_sensitive=True,
+                ignore_classes=['floor','ground','flooring'],
+                return_detail=False
+            ):
+                # 정책이 앞으로 가지 못한다고 판단 → 다시 VLM 호출
                 for _ in range(11):
                     if habitat_env.episode_over: break
                     obs = habitat_env.step(3)
                     episode_images.append(obs['rgb'])
                     episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                     step_counter += 1
-                goal_image, goal_mask, _, debug_image, goal_rotate, goal_flag = nav_planner.make_plan(episode_images[-12:])
+
+                goal_image, goal_mask, _, debug_image2, goal_rotate, goal_flag = \
+                    nav_planner.make_plan(episode_images[-12:])
+
                 for j in range(min(11 - goal_rotate, 1 + goal_rotate)):
                     if habitat_env.episode_over: break
                     if goal_rotate <= 6:
                         obs = habitat_env.step(3)
-                        episode_images.append(obs['rgb'])
-                        episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                     else:
                         obs = habitat_env.step(2)
-                        episode_images.append(obs['rgb'])
-                        episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                    episode_images.append(obs['rgb'])
+                    episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                     step_counter += 1
-                episode_images.append(debug_image)
-                episode_images.append(debug_image)
-                nav_executor.reset(goal_image, goal_mask)
 
-            else :
-                # planning with priors
-                direction_image, debug_mask, pri_flag, debug_image = nav_planner.apply_priors_on_image(obs['rgb'])
-                episode_images.append(debug_image)
-                episode_images.append(debug_image)
+                episode_images.append(debug_image2); episode_images.append(debug_image2)
+
+                # make_plan 내부에서 apply_priors_on_image가 다시 호출되어 _last_bboxes 갱신됨
+                prev_boxes = getattr(nav_planner, "_last_bboxes", [])
+
+                # 최신 goal 세팅은 make_plan 반환값 사용
+                # goal_flag는 make_plan의 pri_flag
+            else:
+                # 유사하지 않음 → priors 결과로 그대로 진행
                 goal_image, goal_mask = direction_image, debug_mask
-                goal_flag = pri_flag  # 이후 while 루프 상단의 조건문에서 활용
+                goal_flag = pri_flag
+
+                # 다음 프레임 비교를 위해 prev 갱신
+                prev_boxes = curr_boxes
 
             print("action", action)
             print("goal _flag", goal_flag)
             print("step_counter", step_counter)
             step_counter = 0
-            nav_executor.reset(goal_image, goal_mask)  # PixelNav reset (새 웨이포인트 반영) 
+            nav_executor.reset(goal_image, goal_mask)
 
     # === NEW: 래핑 원복(중첩 방지) ===
     habitat_env.step = _orig_step
