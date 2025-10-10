@@ -45,6 +45,14 @@ habitat_config = hm3d_config(stage='val', episodes=args.eval_episodes)
 print("scene_dataset =", habitat_config.habitat.simulator.scene_dataset)
 print("scenes_dir    =", habitat_config.habitat.dataset.scenes_dir)
 print("data_path     =", habitat_config.habitat.dataset.data_path)
+
+OmegaConf.set_readonly(habitat_config, False)
+
+from habitat.config.default_structured_configs import NumStepsMeasurementConfig
+with open_dict(habitat_config.habitat.task.measurements):
+    if "num_steps" not in habitat_config.habitat.task.measurements:
+        habitat_config.habitat.task.measurements.num_steps = NumStepsMeasurementConfig()
+
 habitat_env = habitat.Env(habitat_config)
 
 # ✅ YOLOE 초기화 (세그 가중치 필수)

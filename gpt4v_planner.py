@@ -489,7 +489,7 @@ class GPT4V_Planner:
             NEG      = set(map(str.lower, getattr(self, "_negatives", []) or []))
 
             WEIGHTS = {"supports": 0.4, "cooccurs": 0.2, "gateways": 0.4, "negative": 0.0}
-            ALPHA_CONF, BETA_AREA, GAMMA_BOTTOM = 0.1, 0.2, 0.3
+            ALPHA_CONF, BETA_AREA, GAMMA_BOTTOM = 0.01, 0.05, 0.03
 
             def _fallback_via_priors():
                 nonlocal px, py
