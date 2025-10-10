@@ -45,18 +45,6 @@ habitat_config = hm3d_config(stage='val', episodes=args.eval_episodes)
 print("scene_dataset =", habitat_config.habitat.simulator.scene_dataset)
 print("scenes_dir    =", habitat_config.habitat.dataset.scenes_dir)
 print("data_path     =", habitat_config.habitat.dataset.data_path)
-
-try:
-    from habitat.config.default_structured_configs import NumStepsMeasurementConfig
-    with open_dict(habitat_config.habitat.task.measurements):
-        if "num_steps" not in habitat_config.habitat.task.measurements:
-            habitat_config.habitat.task.measurements.num_steps = NumStepsMeasurementConfig()
-except Exception:
-    # 구조화 Config이 없거나 버전 차이가 있을 때 딕셔너리 방식으로 추가
-    with open_dict(habitat_config.habitat.task.measurements):
-        if "num_steps" not in habitat_config.habitat.task.measurements:
-            habitat_config.habitat.task.measurements.num_steps = {"type": "NumStepsMeasure"}
-# ================================================
 habitat_env = habitat.Env(habitat_config)
 
 # ✅ YOLOE 초기화 (세그 가중치 필수)
