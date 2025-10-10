@@ -161,17 +161,35 @@ for i in tqdm(range(args.eval_episodes)):
                 episode_images.append(debug_image)
                 episode_images.append(debug_image)
                 goal_image, goal_mask = direction_image, debug_mask
-                goal_flag = pri_flag  # 이후 while 루프 상단의 조건문에서 활용
+                goal_flag = True  # 이후 while 루프 상단의 조건문에서 활용
                 print("action", action)
                 print("goal _flag", goal_flag)
                 print("step_counter", step_counter)
                 step_counter = 0
+
+                # heading 조정
+                for _ in range(0, abs(heading_offset)):
+                    if habitat_env.episode_over:
+                        break
+                    if heading_offset > 0:
+                        obs = habitat_env.step(5)
+                        episode_images.append(obs['rgb'])
+                        episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                        heading_offset -= 1
+                        step_counter += 1
+                    elif heading_offset < 0:
+                        obs = habitat_env.step(4)
+                        episode_images.append(obs['rgb'])
+                        episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                        heading_offset += 1
+                        step_counter += 1
+
                 nav_executor.reset(goal_image, goal_mask)  # PixelNav reset (새 웨이포인트 반영) 
 
         else:
             if habitat_env.episode_over:
                 break
-
+            # heading 조정
             for _ in range(0, abs(heading_offset)):
                 if habitat_env.episode_over:
                     break

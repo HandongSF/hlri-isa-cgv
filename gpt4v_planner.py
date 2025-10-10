@@ -1,5 +1,5 @@
 import numpy as np
-from llm_utils.gpt_request_ollama import gptv_response, gpt_response 
+from llm_utils.gpt_request import gptv_response, gpt_response
 from llm_utils.nav_prompt import GPT4V_PROMPT, PRIORS_PROMPT, PRIOR_CLASS_LIST
 from llm_utils.priors_parser import parse_llm_json, extract_priors, parse_decision_json
 from cv_utils.yoloe_tools import *
@@ -356,7 +356,8 @@ class GPT4V_Planner:
 
     def apply_priors_on_image(self, image: np.ndarray,
                             conf_threshold: float = 0.20,
-                            iou_threshold: float = 0.50):
+                            iou_threshold: float = 0.50,
+                            return_boxes: bool = False):  # ★ 추가
         # 프롬프트/클래스셋 확보
         prompt_classes = getattr(self, "_prompt_classes", None)
         floor_aliases  = getattr(self, "_floor_aliases", ['floor','ground','flooring'])
@@ -388,9 +389,35 @@ class GPT4V_Planner:
         if xyxy is None:
             xyxy = getattr(det, "boxes", None)
         cls_ids = getattr(det, "class_id", None)
-
         # ★ 박스별 confidence(1D) 확보
         box_conf = np.asarray(det.confidence).astype(np.float32) if getattr(det, "confidence", None) is not None else None
+
+        # ---- 여기서부터: 표준화된 바운딩박스 리스트 생성 ----
+        boxes_std = []  # list[dict]
+        def _push_box(i):
+            x1, y1, x2, y2 = map(float, xyxy[i])
+            # clamp
+            x1 = max(0.0, min(x1, W - 1)); y1 = max(0.0, min(y1, H - 1))
+            x2 = max(x1+1.0, min(x2, W));  y2 = max(y1+1.0, min(y2, H))
+            w = x2 - x1; h = y2 - y1
+            cx = x1 + 0.5 * w; cy = y1 + 0.5 * h
+            ci = int(cls_ids[i]) if cls_ids is not None and np.size(cls_ids) > i else None
+            cn = str(prompt_classes[ci]).lower() if (ci is not None and 0 <= ci < len(prompt_classes)) else None
+            sc = float(box_conf[i]) if box_conf is not None and len(box_conf) > i else None
+            boxes_std.append({
+                "cls": cn,
+                "cls_id": ci,
+                "score": sc,
+                "bbox_xyxy": [int(x1), int(y1), int(x2), int(y2)],
+                "bbox_xywh": [int(x1), int(y1), int(w), int(h)],
+                "center": [float(cx), float(cy)],
+                "area": float(w*h),
+                "norm": {
+                    "cx": float(cx / W), "cy": float(cy / H),
+                    "w": float(w / W),  "h": float(h / H),
+                    "area": float((w*h) / (W*H + 1e-12)),
+                }
+            })
 
         # 유틸
         def _safe_boxes_ok():
@@ -436,6 +463,10 @@ class GPT4V_Planner:
         pri_flag = False
 
         if _safe_boxes_ok():
+            # 표준화 리스트 채우기
+            for i in range(len(xyxy)):
+                _push_box(i)
+
             cls_ids = np.asarray(cls_ids).astype(int)
 
             def _name(ci):
@@ -451,8 +482,7 @@ class GPT4V_Planner:
                 return (h_bottom / H)
 
             # priors 집합
-            pri = self.latest_priors or {"Supports": [], "StrongCooccurs": [], "Gateways": [],
-                                        "Lookalikes": []}
+            pri = self.latest_priors or {"Supports": [], "StrongCooccurs": [], "Gateways": [], "Lookalikes": []}
             supports = set(map(str.lower, pri.get("Supports", [])))
             cooccurs = set(map(str.lower, pri.get("StrongCooccurs", [])))
             gateways = set(map(str.lower, pri.get("Gateways", [])))
@@ -461,7 +491,6 @@ class GPT4V_Planner:
             WEIGHTS = {"supports": 0.4, "cooccurs": 0.2, "gateways": 0.4, "negative": 0.0}
             ALPHA_CONF, BETA_AREA, GAMMA_BOTTOM = 0.5, 0.3, 0.2
 
-            # ★ priors 기반 폴백
             def _fallback_via_priors():
                 nonlocal px, py
                 best_i, best_score = None, -1e9
@@ -479,7 +508,6 @@ class GPT4V_Planner:
                     else:
                         base = 0.0
 
-                    # ★ priors 스코어링에서도 det.confidence 사용
                     conf = float(box_conf[i]) if box_conf is not None else 1.0
                     score = base + ALPHA_CONF * conf + BETA_AREA * _norm_area(i) + GAMMA_BOTTOM * _bottom_bias(i)
 
@@ -488,26 +516,23 @@ class GPT4V_Planner:
                         best_i, best_score, best_area = i, score, a
 
                 if best_i is not None and best_score > WEIGHTS["negative"]:
-                    px, py = _center(best_i)
-                    return
+                    px, py = _center(best_i); return
 
                 floor_set = set(map(str.lower, floor_aliases))
                 floor_inds = [i for i, ci in enumerate(cls_ids) if _name(ci) in floor_set]
                 if len(floor_inds) > 0:
                     areas = [_area(i) for i in floor_inds]
                     top = floor_inds[int(np.argmax(areas))]
-                    px, py = _center(top)
-                    return
-                
+                    px, py = _center(top); return
+
             # ★ 타깃 확정: conf 컷오프 + lookalikes IoU 검사
             MIN_TARGET_CONF = 0.3
-            LA_IOU_THRES    = 0.50
+            LA_IOU_THRES    = 0.99
             used_target = False
 
             if goal_idx >= 0 and np.any(cls_ids == goal_idx):
                 target_inds = np.where(cls_ids == goal_idx)[0]
 
-                # ★ conf 없으면 보수적으로 타깃 확정 금지
                 if box_conf is None:
                     target_inds = np.array([], dtype=int)
                 else:
@@ -518,7 +543,6 @@ class GPT4V_Planner:
                     top = _pick_largest(target_inds)
                     look_inds = [k for k, ci in enumerate(cls_ids) if _name(ci) in NEG]
 
-                    # ★ lookalikes와의 IoU가 높으면 priors 폴백
                     if top is not None and any(_iou(top, lk) >= LA_IOU_THRES for lk in look_inds):
                         _fallback_via_priors()
                     else:
@@ -542,7 +566,15 @@ class GPT4V_Planner:
             markerType=cv2.MARKER_CROSS, markerSize=16, thickness=2
         )
 
-        return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), debug_mask, pri_flag, vis_bgr
+        # ★ 최근 박스 저장(원하면 비교용으로 활용)
+        self._last_bboxes = boxes_std
+
+        # ★ 호환성 유지: 기본은 4-튜플, 필요 시 5번째로 boxes_std 반환
+        if return_boxes:
+            return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), debug_mask, pri_flag, vis_bgr, boxes_std
+        else:
+            return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), debug_mask, pri_flag, vis_bgr
+
     
     def obs_goal_object(self,
                         image: np.ndarray,
