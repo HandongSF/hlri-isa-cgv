@@ -525,7 +525,7 @@ class GPT4V_Planner:
                     top = floor_inds[int(np.argmax(areas))]
                     px, py = _center(top); return
 
-            # ★ 타깃 확정: conf 컷오프 + lookalikes IoU 검사
+            # ★ 타깃 처리: "검출만 되면 우선 접근", 확정(pri_flag)은 conf/룩어라이크로 판정
             MIN_TARGET_CONF = 0.3
             LA_IOU_THRES    = 0.99
             used_target = False
@@ -533,23 +533,32 @@ class GPT4V_Planner:
             if goal_idx >= 0 and np.any(cls_ids == goal_idx):
                 target_inds = np.where(cls_ids == goal_idx)[0]
 
-                if box_conf is None:
-                    target_inds = np.array([], dtype=int)
-                else:
-                    ok_mask = box_conf[target_inds] >= MIN_TARGET_CONF
-                    target_inds = target_inds[ok_mask]
-
+                top = None
                 if len(target_inds) > 0:
-                    top = _pick_largest(target_inds)
-                    look_inds = [k for k, ci in enumerate(cls_ids) if _name(ci) in NEG]
-
-                    if top is not None and any(_iou(top, lk) >= LA_IOU_THRES for lk in look_inds):
-                        _fallback_via_priors()
+                    if box_conf is not None:
+                        # conf 우선, 동률이면 면적 큰 것
+                        cand = sorted(
+                            target_inds,
+                            key=lambda i: (float(box_conf[i]), _area(i)),
+                            reverse=True
+                        )
+                        top = int(cand[0])
                     else:
-                        if top is not None:
-                            px, py = _center(top)
-                            pri_flag = True
-                            used_target = True
+                        # 신뢰도 정보가 없으면 면적 최대
+                        top = _pick_largest(target_inds)
+
+                if top is not None:
+                    # 우선 접근(중심 선택)
+                    px, py = _center(top)
+                    used_target = True
+
+                    # pri_flag(확정 여부) 판정: conf 기준 + 룩어라이크 충돌 없음
+                    conf_ok = (box_conf is not None) and (float(box_conf[top]) >= MIN_TARGET_CONF)
+                    look_inds = [k for k, ci in enumerate(cls_ids) if _name(ci) in NEG]
+                    la_conflict = any(_iou(top, lk) >= LA_IOU_THRES for lk in look_inds)
+
+                    pri_flag = bool(conf_ok and not la_conflict)
+                    # (conf 부족/룩어라이크 충돌이면 pri_flag=False이지만 중심은 유지 → 근접 확인)
 
             if not used_target and not pri_flag:
                 _fallback_via_priors()
@@ -574,6 +583,7 @@ class GPT4V_Planner:
             return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), debug_mask, pri_flag, vis_bgr, boxes_std
         else:
             return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), debug_mask, pri_flag, vis_bgr
+
 
     
     def obs_goal_object(self,
