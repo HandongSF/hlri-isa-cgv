@@ -171,9 +171,16 @@ for i in tqdm(range(args.eval_episodes)):
                     step_counter += 1
             
             prev_boxes = getattr(nav_planner, "_last_bboxes", []) if prev_boxes is None else prev_boxes
-            direction_image, debug_mask, pri_flag, debug_image, curr_boxes = \
-                nav_planner.apply_priors_on_image(obs['rgb'], return_boxes=True)
-            episode_images.append(debug_image); episode_images.append(debug_image)
+
+            for _ in range(11):
+                if habitat_env.episode_over: break
+                obs = habitat_env.step(3)
+                episode_images.append(obs['rgb'])
+                episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                step_counter += 1
+            
+            direction_image, debug_mask, pri_flag, debug_image, curr_boxes, goal_rotate = \
+                nav_planner.apply_priors_on_image(episode_images[-12:], return_boxes=True)
 
             if nav_planner.are_bboxes_similar(
                 prev_boxes, curr_boxes,
@@ -212,6 +219,18 @@ for i in tqdm(range(args.eval_episodes)):
                 # 최신 goal 세팅은 make_plan 반환값 사용
                 # goal_flag는 make_plan의 pri_flag
             else:
+                # 바로 회전 보정(초기 make_plan 직후와 동일 로직)
+                for j in range(min(11 - goal_rotate, 1 + goal_rotate)):
+                    if habitat_env.episode_over: break
+                    if goal_rotate <= 6:
+                        obs = habitat_env.step(3)  # 좌회전 가정
+                    else:
+                        obs = habitat_env.step(2)  # 우회전 가정
+                    episode_images.append(obs['rgb'])
+                    episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                    step_counter += 1
+
+                episode_images.append(debug_image); episode_images.append(debug_image)
                 # 유사하지 않음 → priors 결과로 그대로 진행
                 goal_image, goal_mask = direction_image, debug_mask
                 goal_flag = pri_flag
