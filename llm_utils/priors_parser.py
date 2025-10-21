@@ -11,7 +11,7 @@ _BRACED_RE  = re.compile(r"\{.*\}", flags=re.DOTALL)
 
 # 형식 규칙(개수 제한 없음; 형식만 체크)
 MAX_ITEM_WORDS   = 3
-REQ_GATEWAYS     = ["doorway", "hallway", "corridor"]  # 항상 포함 보장
+REQ_GATEWAYS     = ["doorway"]  # 항상 포함 보장
 
 # ----------------- 유틸 -----------------
 def _lower_list(x: Any) -> List[str]:
@@ -89,7 +89,7 @@ def _filter_item_len(items: List[str], violations: List[str], field_name: str) -
     return out
 
 def _ensure_gateways_required(gws: List[str]) -> List[str]:
-    """gateways에 doorway/hallway/corridor 항상 포함되도록 보강(중복 제거, 개수 제한 없음)."""
+    """gateways에 doorway가 항상 포함되도록 보강(중복 제거, 개수 제한 없음)."""
     s = set(gws)
     add = [g for g in REQ_GATEWAYS if g not in s]
     return _dedup(add + gws)
