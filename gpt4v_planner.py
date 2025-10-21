@@ -16,7 +16,7 @@ class GPT4V_Planner:
     def __init__(self,yoloe_model):
         self.gptv_trajectory = []
         self.yoloe_model = yoloe_model
-        self.detect_objects = ['bed','sofa','chair','plant','tv','toilet','floor']
+        self.detect_objects = ['bed','sofa','chair','plant','tv monitor','toilet','floor']
         # ---- LLM/플래너/모듈별 시간 계측 저장소 ----
         self.llm_call_count = 0
         self.llm_durations = []          # 각 LLM 호출 소요시간(초)
@@ -29,6 +29,10 @@ class GPT4V_Planner:
         self._prompt_classes = None
         self._floor_aliases = ['floor', 'ground', 'flooring']
         self._negatives = []
+
+        # 전방 가중치(원하면 여기서만 숫자 바꾸면 됨)
+        self.forward_bonus = 0.15           # 전방(인덱스 0) 보너스
+        self.forward_neighbor_bonus = 0.08  # 전방 이웃(±30°) 보너스
 
         # 📁 로깅 폴더 (끄기: None)
         self._logdir = None  # NEW
@@ -65,7 +69,7 @@ class GPT4V_Planner:
     def reset(self,object_goal):
         # translation to align for the detection model
         if object_goal == 'tv_monitor':
-            self.object_goal = 'tv'
+            self.object_goal = 'tv monitor'
         else:
             self.object_goal = object_goal
 
@@ -353,11 +357,10 @@ class GPT4V_Planner:
         except Exception:
             return np.random.randint(0, max(1, len(pano_images))), False
 
-
     def apply_priors_on_image(
         self,
         image_or_pano,                          # np.ndarray (RGB) or Sequence[np.ndarray]
-        conf_threshold: float = 0.10,
+        conf_threshold: float = 0.20,
         iou_threshold: float = 0.50,
         return_boxes: bool = False
     ):
@@ -387,8 +390,8 @@ class GPT4V_Planner:
 
         # 내부 상수 (기존 로직과 동일)
         WEIGHTS = {"supports": 0.4, "cooccurs": 0.2, "gateways": 0.4, "negative": 0.0}
-        ALPHA_CONF, BETA_AREA, GAMMA_BOTTOM = 0.01, 0.05, 0.03
-        MIN_TARGET_CONF = 0.3
+        BETA_AREA, GAMMA_BOTTOM = 0.03, 0.05
+        MIN_TARGET_CONF = 0.35
         LA_IOU_THRES    = 0.99
         NEG = set(map(str.lower, getattr(self, "_negatives", []) or []))
 
@@ -552,8 +555,8 @@ class GPT4V_Planner:
                             base = WEIGHTS["gateways"]
                         else:
                             base = 0.0
-                        conf = float(box_conf[i]) if box_conf is not None else 1.0
-                        score = base + ALPHA_CONF * conf + BETA_AREA * _norm_area(i) + GAMMA_BOTTOM * _bottom_bias(i)
+
+                        score = base + BETA_AREA * _norm_area(i) + GAMMA_BOTTOM * _bottom_bias(i)
                         a = _area(i)
                         if (score > best_score) or (np.isclose(score, best_score) and a > best_area):
                             best_i, best_score, best_area = i, score, a
@@ -569,7 +572,7 @@ class GPT4V_Planner:
                             px, py = _center(top)
                             dir_score = WEIGHTS["supports"] * 0.1  # 아주 낮은 가중(임의)
                         else:
-                            dir_score = -1e6  # 아무것도 쓸만한 게 없을 때
+                            dir_score = 0  # 아무것도 쓸만한 게 없을 때
 
             # 정책용 마스크 (선택 좌표의 8x8 사각형)
             r = 8
@@ -589,16 +592,29 @@ class GPT4V_Planner:
 
         # ---- 분기: 단일 vs 파노라믹 ----
         if isinstance(image_or_pano, (list, tuple)):
-            # 파노라믹: 각 프레임 처리 → 최고 점수 idx 선택
+            # 파노라믹: 각 프레임 처리 → 최고 점수 idx 선택 (+ 전방 보너스)
             best = None
             best_idx = 0
+            best_cmp = -1e9
+            N = len(image_or_pano)
+
+            def _fwd_bias(idx: int) -> float:
+                # 인덱스 0 = 전방, 1/ N-1 = 전방 이웃(±30°)
+                if N <= 0:
+                    return 0.0
+                if idx % N == 0:
+                    return getattr(self, "forward_bonus", 0.15)
+                if (idx % N == 1) or (idx % N == (N - 1)):
+                    return getattr(self, "forward_neighbor_bonus", 0.08)
+                return 0.0
+
             for idx, frame in enumerate(image_or_pano):
-                out = _process_single(frame)
-                score = out[-1]
-                if (best is None) or (score > best[-1]):
+                out = _process_single(frame)   # (..., dir_score) 포함
+                cmp_score = out[-1] + _fwd_bias(idx)
+                if (best is None) or (cmp_score > best_cmp):
                     best = (idx, *out)
                     best_idx = idx
-
+                    best_cmp = cmp_score
             # 선택된 방향의 아웃풋 구성
             _, goal_bgr, debug_mask, pri_flag, vis_bgr, boxes_std, _ = best
             self._last_bboxes = boxes_std  # 최신 박스는 선택 방향 기준으로 유지
@@ -616,51 +632,6 @@ class GPT4V_Planner:
                 return goal_bgr, debug_mask, pri_flag, vis_bgr, boxes_std
             else:
                 return goal_bgr, debug_mask, pri_flag, vis_bgr
-
-
-    
-    def obs_goal_object(self,
-                        image: np.ndarray,
-                        conf_threshold: float = 0.30,
-                        iou_threshold: float = 0.50) -> bool:
-        """
-        현재 object_goal의 존재 여부만 간단히 판정.
-        - YOLOE box_threshold=conf_threshold로 필터링된 결과에서
-          목표 클래스가 1개 이상 있으면 True, 없으면 False.
-        - IoU 기반 추가 판정은 하지 않음(간단/빠른 체크).
-        """
-        # 클래스셋 보장(priors 반영)
-        prompt_classes = getattr(self, "_prompt_classes", None)
-        if not prompt_classes:
-            self._set_prompt_from_priors(self.latest_priors or {})
-            prompt_classes = self._prompt_classes
-
-        goal_name = getattr(self, "object_goal", "") or ""
-        try:
-            goal_idx = prompt_classes.index(goal_name)
-        except ValueError:
-            # 현재 프롬프트 클래스에 목표가 없다면 탐지 불가
-            return False
-
-        # YOLOE 탐지 (세그 OFF, NMS는 내부에서 iou_threshold 사용)
-        det = yoloe_detection(
-            image=image,
-            target_classes=prompt_classes,
-            model=self.yoloe_model,
-            box_threshold=conf_threshold,
-            iou_threshold=iou_threshold,
-            run_extra_nms=False,
-            use_text_prompt=False,
-            retina_masks=False,
-        )
-
-        cls_ids = getattr(det, "class_id", None)
-        if cls_ids is None or len(cls_ids) == 0:
-            return False
-
-        cls_ids = np.asarray(cls_ids).astype(int)
-        # box_threshold에서 이미 컷이 되었으므로 신뢰도 배열이 없어도 OK
-        return bool(np.any(cls_ids == goal_idx))
 
     def are_bboxes_similar(
         self,
