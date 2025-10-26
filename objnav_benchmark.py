@@ -20,10 +20,6 @@ from cv_utils.yoloe_tools import initialize_yoloe_model
 from omegaconf import OmegaConf, open_dict
 
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-os.environ["MAGNUM_LOG"] = "quiet"
-os.environ["HABITAT_SIM_LOG"] = "quiet"
-
 def write_metrics(metrics, path="objnav_hm3d.csv"):
     with open(path, mode="w", newline="") as csv_file:
         fieldnames = metrics[0].keys()
@@ -75,7 +71,6 @@ nav_executor = Policy_Agent(model_path=POLICY_CHECKPOINT)
 evaluation_metrics = []
 
 for i in tqdm(range(args.eval_episodes)):
-    find_goal = False
     obs = habitat_env.reset()
 
     # === NEW: 에피소드 총 이동거리(유클리드) 집계용 step 래핑 시작 ===
@@ -172,20 +167,39 @@ for i in tqdm(range(args.eval_episodes)):
             
             prev_boxes = getattr(nav_planner, "_last_bboxes", []) if prev_boxes is None else prev_boxes
 
-            for _ in range(11):
+            # --- (NEW) 동일 스캔: -60, -30, 0, +30, +60 ---
+            pano5 = []
+            angles5 = []
+
+            # 1) 먼저 왼쪽으로 2번 돌아 -60° 도달
+            for _ in range(2):
                 if habitat_env.episode_over: break
-                obs = habitat_env.step(3)
+                obs = habitat_env.step(3)  # 좌회전(-30°)
                 episode_images.append(obs['rgb'])
                 episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                 step_counter += 1
-            
-            direction_image, debug_mask, pri_flag, debug_image, curr_boxes, goal_rotate = \
-                nav_planner.apply_priors_on_image(episode_images[-12:], return_boxes=True)
+
+            # 2) -60에서 시작해 우측으로 스윕하며 프레임 수집
+            pano5.append(episode_images[-1]); angles5.append(-60)
+            for k in range(4):
+                if habitat_env.episode_over: break
+                obs = habitat_env.step(2)  # 우회전(+30°)
+                episode_images.append(obs['rgb'])
+                episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                step_counter += 1
+                pano5.append(obs['rgb'])
+                angles5.append(-60 + 30*(k+1))  # -30, 0, +30, +60
+
+            if habitat_env.episode_over or len(pano5) == 0:
+                break
+
+            # priors 기반 방향 선택(5장)
+            direction_image, debug_mask, pri_flag, debug_image, curr_boxes, best_idx = \
+                nav_planner.apply_priors_on_image(pano5, return_boxes=True)
+
 
             if nav_planner.are_bboxes_similar(
                 prev_boxes, curr_boxes,
-                iou_thresh=0.85, center_tol=0.01, area_tol=0.10,   # 엄격 프리셋(원하면 조정)
-                min_match_ratio=0.95,
                 class_sensitive=True,
                 ignore_classes=['floor','ground','flooring'],
                 return_detail=False
@@ -219,23 +233,30 @@ for i in tqdm(range(args.eval_episodes)):
                 # 최신 goal 세팅은 make_plan 반환값 사용
                 # goal_flag는 make_plan의 pri_flag
             else:
-                # 바로 회전 보정(초기 make_plan 직후와 동일 로직)
-                for j in range(min(11 - goal_rotate, 1 + goal_rotate)):
-                    if habitat_env.episode_over: break
-                    if goal_rotate <= 6:
-                        obs = habitat_env.step(3)  # 좌회전 가정
-                    else:
-                        obs = habitat_env.step(2)  # 우회전 가정
-                    episode_images.append(obs['rgb'])
-                    episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
-                    step_counter += 1
-
+                # === 정상 진행: 스캔 종료 헤딩(+60)에서 선택 각도로 회전 ===
+                cur_deg = int(angles5[-1])          # +60
+                sel_deg = int(angles5[best_idx])    # {-60,-30,0,30,60}
+                delta = sel_deg - cur_deg
+                turns = abs(delta) // 30
+                if delta < 0:
+                    for _ in range(turns):
+                        if habitat_env.episode_over: break
+                        obs = habitat_env.step(3)  # 좌회전
+                        episode_images.append(obs['rgb'])
+                        episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                        step_counter += 1
+                elif delta > 0:
+                    for _ in range(turns):
+                        if habitat_env.episode_over: break
+                        obs = habitat_env.step(2)  # 우회전
+                        episode_images.append(obs['rgb'])
+                        episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                        step_counter += 1
+                        
                 episode_images.append(debug_image); episode_images.append(debug_image)
-                # 유사하지 않음 → priors 결과로 그대로 진행
+
                 goal_image, goal_mask = direction_image, debug_mask
                 goal_flag = pri_flag
-
-                # 다음 프레임 비교를 위해 prev 갱신
                 prev_boxes = curr_boxes
 
             print("action", action)
