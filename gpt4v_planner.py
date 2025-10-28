@@ -106,13 +106,30 @@ class GPT4V_Planner:
     def make_plan(self, pano_images):
         """
         Returns:
-            goal_image_rgb (np.ndarray, RGB): 정책 입력용 목표 이미지 (RGB)
-            debug_mask     (np.ndarray, uint8 HxW): 정책 입력용 0/255 마스크
-            debug_image    (np.ndarray, RGB): 선택 포인트가 네모로 찍힌 방향 프레임 (디버그)
-            vis_rgb        (np.ndarray, RGB): detection 오버레이 시각화
-            direction      (int): 선택된 파노라마 인덱스
-            pri_flag       (bool): 타깃이 직접 검출되었는지 여부
+            goal_image_rgb (np.ndarray, RGB):
+                정책 입력용 목표 이미지 (RGB). 선택된 방향 프레임 자체를 복사한 것.
+
+            debug_mask (np.ndarray, uint8 HxW):
+                정책 입력용 0/255 마스크. 현재 subgoal로 가야 할 픽셀 주변(작은 정사각형)만 255.
+
+            debug_image (np.ndarray, RGB):
+                선택된 방향 프레임에 subgoal 위치를 네모로 시각적으로 찍어둔 디버그용 이미지.
+
+            vis_rgb (np.ndarray, RGB):
+                YOLOE detection 결과와 subgoal 위치 마커를 그려둔 시각화 이미지.
+
+            direction (int):
+                파노라마에서 선택된 뷰의 인덱스. (ex. 0~11 또는 0~4 같은 로컬 yaw index)
+
+            pri_flag (bool):
+                "목표 카테고리로 분류된 박스가 프레임 안에 있었다"고 판단되면 True.
+                즉 클래스 매칭만으로도 후보 타깃이라고 본 상태 (confidence 낮아도 True 가능).
+
+            obj_detected (bool):
+                실제 타깃이라고 확신할 수 있을 정도로 신뢰도가 높은 박스가 있다고 본 경우 True.
+                (conf ≥ MIN_TARGET_CONF 이고 lookalike와 과도하게 겹치지 않는 경우)
         """
+
         _plan_t0 = time.perf_counter()
 
         # 1) LLM로 진행 방향/priors 결정
@@ -124,7 +141,7 @@ class GPT4V_Planner:
 
         # 3) priors-기반 웨이포인트 선택을 apply_priors_on_image로 통일
         #    - 이 함수가 YOLOE 박스 → priors 스코어링 → 바닥 폴백까지 수행
-        goal_image_rgb, debug_mask, pri_flag, vis_rgb = self.apply_priors_on_image(direction_image)
+        goal_image_rgb, debug_mask, pri_flag, obj_detected, vis_rgb = self.apply_priors_on_image(direction_image)
 
         # 4) 디버그 이미지에 사각형 찍기 (PixNav 스타일)  # <-- changed
         debug_image = np.array(direction_image)  # copy
@@ -151,7 +168,7 @@ class GPT4V_Planner:
         self.planner_durations.append(time.perf_counter() - _plan_t0)
 
         # 6) 리턴 (기존 시그니처 유지)
-        return goal_image_rgb, debug_mask, debug_image, vis_rgb, direction, pri_flag
+        return goal_image_rgb, debug_mask, debug_image, vis_rgb, direction, pri_flag, obj_detected
 
 
     def _set_prompt_from_priors(self, priors: dict):
@@ -368,15 +385,15 @@ class GPT4V_Planner:
 
         - 단일 이미지 입력(np.ndarray, RGB):
             반환값
-            => (goal_rgb, debug_mask, pri_flag, vis_rgb)                     # return_boxes=False
-            => (goal_rgb, debug_mask, pri_flag, vis_rgb, boxes_std)          # return_boxes=True
+            => (goal_rgb, debug_mask, pri_flag, obj_detected, vis_rgb)                     # return_boxes=False
+            => (goal_rgb, debug_mask, pri_flag, obj_detected, vis_rgb, boxes_std)          # return_boxes=True
 
         - 파노라믹 입력(list/tuple of RGB frames, 보통 12장: episode_images[-12:]):
             각 방향별로 동일 로직으로 웨이포인트/점수를 산출 후
             가장 점수가 높은 방향(idx)을 goal_rotate로 선택하여 반환.
             반환값
-            => (goal_rgb, debug_mask, pri_flag, vis_rgb, goal_rotate)                     # return_boxes=False
-            => (goal_rgb, debug_mask, pri_flag, vis_rgb, boxes_std, goal_rotate)         # return_boxes=True
+            => (goal_rgb, debug_mask, pri_flag, obj_detected, vis_rgb, goal_rotate)                     # return_boxes=False
+            => (goal_rgb, debug_mask, pri_flag, obj_detected, vis_rgb, boxes_std, goal_rotate)         # return_boxes=True
         """
         # -------- 공통: 프롬프트/클래스셋 보장 --------
         prompt_classes = getattr(self, "_prompt_classes", None)
@@ -390,7 +407,7 @@ class GPT4V_Planner:
         WEIGHTS = {"supports": 0.4, "cooccurs": 0.2, "gateways": 0.4, "lookalikes": 0.6}
         BETA_AREA, GAMMA_BOTTOM = 0.03, 0.05
         MIN_TARGET_CONF = 0.35
-        LA_IOU_THRES    = 0.99
+        LA_IOU_THRES    = 0.90
         
 
         # priors 셋
@@ -512,7 +529,7 @@ class GPT4V_Planner:
             # 기본값
             px, py = W // 2, H // 2
             pri_flag = False
-            used_target = False
+            obj_detected = False
             dir_score = -1e9  # 파노라 방향 선택용 점수
 
             if _safe():
@@ -530,17 +547,19 @@ class GPT4V_Planner:
                         else:
                             top = int(t_inds[np.argmax([_area(i) for i in t_inds])])
                         px, py = _center(top)
-                        used_target = True
                         conf_ok = (box_conf is not None) and (float(box_conf[top]) >= MIN_TARGET_CONF)
                         la_inds = [k for k, ci in enumerate(cls_np) if _name(ci) in lookalikes]
                         la_conflict = any(_iou(top, lk) >= LA_IOU_THRES for lk in la_inds)
-                        pri_flag = bool(conf_ok and not la_conflict)
+                        box_area_norm = _norm_area(top)      # box 픽셀수 / (W*H)
+                        big_enough = (box_area_norm >= 0.125) # 1/8 이상이면 True
+                        obj_detected = bool(conf_ok and not la_conflict and big_enough)
+                        pri_flag = True
                         # 목표 발견 시 방향 점수는 높은 기준으로
                         dir_score = 1.0 + (float(box_conf[top]) if box_conf is not None else 0.0) * 0.5 \
                                     + 0.1 * _norm_area(top) + 0.05 * _bottom_bias(top)
 
                 # 2) 목표가 없거나(혹은 pri_flag=False지만) priors 기반 폴백 스코어
-                if not used_target:
+                if not pri_flag:
                     best_i, best_score, best_area = None, -1e9, -1.0
                     for i, ci in enumerate(cls_np):
                         name = _name(ci)
@@ -595,7 +614,7 @@ class GPT4V_Planner:
 
             vis_rgb = cv2.cvtColor(vis_bgr, cv2.COLOR_BGR2RGB)
             goal_rgb = rgb.copy()
-            return goal_rgb, debug_mask, pri_flag, vis_rgb, boxes_std, dir_score
+            return goal_rgb, debug_mask, pri_flag, obj_detected, vis_rgb, boxes_std, dir_score
 
         # ---- 분기: 단일 vs 파노라믹 ----
         if isinstance(image_or_pano, (list, tuple)):
@@ -612,22 +631,22 @@ class GPT4V_Planner:
                     best_idx = idx
                     best_cmp = cmp_score
             # 선택된 방향의 아웃풋 구성
-            _, goal_rgb, debug_mask, pri_flag, vis_rgb, boxes_std, _ = best
+            _, goal_rgb, debug_mask, pri_flag, obj_detected, vis_rgb, boxes_std, _ = best
             self._last_bboxes = boxes_std  # 최신 박스는 선택 방향 기준으로 유지
 
             if return_boxes:
-                return goal_rgb, debug_mask, pri_flag, vis_rgb, boxes_std, int(best_idx)
+                return goal_rgb, debug_mask, pri_flag, obj_detected, vis_rgb, boxes_std, int(best_idx)
             else:
-                return goal_rgb, debug_mask, pri_flag, vis_rgb, int(best_idx)
+                return goal_rgb, debug_mask, pri_flag, obj_detected, vis_rgb, int(best_idx)
 
         else:
             # 단일 이미지: 기존 반환 형태 유지 (하위호환)
-            goal_rgb, debug_mask, pri_flag, vis_rgb, boxes_std, _ = _process_single(image_or_pano)
+            goal_rgb, debug_mask, pri_flag, obj_detected, vis_rgb, boxes_std, _ = _process_single(image_or_pano)
             self._last_bboxes = boxes_std
             if return_boxes:
-                return goal_rgb, debug_mask, pri_flag, vis_rgb, boxes_std
+                return goal_rgb, debug_mask, pri_flag, obj_detected, vis_rgb, boxes_std
             else:
-                return goal_rgb, debug_mask, pri_flag, vis_rgb
+                return goal_rgb, debug_mask, pri_flag, obj_detected, vis_rgb
 
     def are_bboxes_similar(
         self,

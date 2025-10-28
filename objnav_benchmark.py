@@ -98,6 +98,8 @@ for i in tqdm(range(args.eval_episodes)):
     start_geodesic_m = float(habitat_env.get_metrics()['distance_to_goal'])  
     prev_boxes = None
     curr_boxes = None
+    pending_verify = False  
+    goal_flag = False
 
     nav_planner.reset(habitat_env.current_episode.object_category)
     episode_images = [obs['rgb']]
@@ -116,7 +118,9 @@ for i in tqdm(range(args.eval_episodes)):
         episode_images.append(obs['rgb'])
         episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
         step_counter += 1
-    goal_image, goal_mask, _, debug_image, goal_rotate, goal_flag = nav_planner.make_plan(episode_images[-12:])
+    goal_image, goal_mask, debug_image, vis_rgb, goal_rotate,  pri_flag, obj_detected = nav_planner.make_plan(episode_images[-12:])
+    pending_verify = (pri_flag and (not obj_detected))
+    goal_flag = obj_detected
     for j in range(min(11 - goal_rotate, 1 + goal_rotate)):
         if goal_rotate <= 6:
             obs = habitat_env.step(3)
@@ -128,13 +132,72 @@ for i in tqdm(range(args.eval_episodes)):
             episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
         step_counter += 1
 
-    episode_images.append(debug_image)
-    episode_images.append(debug_image)
+    episode_images.append(vis_rgb)
+    episode_images.append(vis_rgb)
     nav_executor.reset(goal_image, goal_mask)
 
 
     while not habitat_env.episode_over:
         action, skill_image = nav_executor.step(obs['rgb'], habitat_env.sim.previous_step_collided)
+
+        # ===== 최종 확인 로직 (웨이포인트 도착 & 그 지점이 의심타겟이었을 때) =====
+        if pending_verify and action == 0:
+            # 여기서 한 바퀴 돌면서 make_plan()으로 다시 pri_flag 체크
+            # (너 이미 아래쪽에서 하는 360 스캔 코드 재사용 가능)
+
+            # 1) 현 위치에서 주변을 스캔해서 episode_images에 쌓아
+            for _ in range(11):
+                if habitat_env.episode_over: break
+                obs = habitat_env.step(3)  # 좌로 도는 등 30도씩 회전
+                episode_images.append(obs['rgb'])
+                episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                step_counter += 1
+
+            # 2) 최근 12장의 뷰로 make_plan 호출            
+            (
+                verify_goal_image,
+                verify_goal_mask,
+                verify_debug_image,
+                verify_vis,
+                verify_rotate,
+                verify_pri_flag,
+                verify_obj_detected
+            ) = nav_planner.make_plan(episode_images[-12:])
+
+            # 3) make_plan이 알려준 best 방향으로 정면 맞추기 (네가 이미 아래서 하던 거 복붙)
+            for j in range(min(11 - verify_rotate, 1 + verify_rotate)):
+                if habitat_env.episode_over: break
+                if verify_rotate <= 6:
+                    obs = habitat_env.step(3)
+                else:
+                    obs = habitat_env.step(2)
+                episode_images.append(obs['rgb'])
+                episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                step_counter += 1
+
+            episode_images.append(verify_vis)
+            episode_images.append(verify_vis)
+
+            # 4) 최종 판정
+            if verify_obj_detected:
+                # 이제 진짜 목표물 눈앞에 있는 걸로 확정
+                goal_flag = True
+                # 성공 처리: 에피소드 끝내고 싶으면 break
+                pending_verify = False
+            else:
+                # 아직도 확신 못 했음 -> 계속 탐색
+                # 이 시점의 goal을 업데이트하고 계속 가자
+                pending_verify = False   # 더 이상 "확인 대기" 상태 아님
+                goal_flag = False
+                prev_boxes = getattr(nav_planner, "_last_bboxes", [])
+
+
+                # 새 goal로 정책 리셋
+                nav_executor.reset(verify_goal_image, verify_goal_mask)
+
+                # 그리고 바로 다음 while 루프 반복으로 넘어감
+                continue
+
         if action != 0 or goal_flag:
             if action == 4:
                 heading_offset += 1
@@ -194,8 +257,15 @@ for i in tqdm(range(args.eval_episodes)):
                 break
 
             # priors 기반 방향 선택(5장)
-            direction_image, debug_mask, pri_flag, debug_image, curr_boxes, best_idx = \
-                nav_planner.apply_priors_on_image(pano5, return_boxes=True)
+            (
+                direction_image,   # goal_rgb
+                debug_mask,
+                pri_flag,
+                obj_detected,
+                debug_vis,         # vis_rgb
+                curr_boxes,
+                best_idx
+            ) = nav_planner.apply_priors_on_image(pano5, return_boxes=True)
 
 
             if nav_planner.are_bboxes_similar(
@@ -212,8 +282,15 @@ for i in tqdm(range(args.eval_episodes)):
                     episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                     step_counter += 1
 
-                goal_image, goal_mask, _, debug_image2, goal_rotate, goal_flag = \
-                    nav_planner.make_plan(episode_images[-12:])
+                (
+                    goal_image,
+                    goal_mask,
+                    debug_image2,
+                    vis_rgb2,
+                    goal_rotate,
+                    pri_flag,
+                    obj_detected
+                ) = nav_planner.make_plan(episode_images[-12:])
 
                 for j in range(min(11 - goal_rotate, 1 + goal_rotate)):
                     if habitat_env.episode_over: break
@@ -225,13 +302,13 @@ for i in tqdm(range(args.eval_episodes)):
                     episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                     step_counter += 1
 
-                episode_images.append(debug_image2); episode_images.append(debug_image2)
+                episode_images.append(vis_rgb2); episode_images.append(vis_rgb2)
 
                 # make_plan 내부에서 apply_priors_on_image가 다시 호출되어 _last_bboxes 갱신됨
                 prev_boxes = getattr(nav_planner, "_last_bboxes", [])
+                pending_verify = (pri_flag and (not obj_detected))
+                goal_flag = obj_detected
 
-                # 최신 goal 세팅은 make_plan 반환값 사용
-                # goal_flag는 make_plan의 pri_flag
             else:
                 # === 정상 진행: 스캔 종료 헤딩(+60)에서 선택 각도로 회전 ===
                 cur_deg = int(angles5[-1])          # +60
@@ -253,10 +330,11 @@ for i in tqdm(range(args.eval_episodes)):
                         episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                         step_counter += 1
                         
-                episode_images.append(debug_image); episode_images.append(debug_image)
-
+                episode_images.append(debug_vis); episode_images.append(debug_vis)
                 goal_image, goal_mask = direction_image, debug_mask
-                goal_flag = pri_flag
+                # 이건 아직 최종 확신은 아님. 도착 후 한 번 더 확인할 거라서:
+                pending_verify = pri_flag and (not obj_detected)
+                goal_flag = obj_detected
                 prev_boxes = curr_boxes
 
             print("action", action)

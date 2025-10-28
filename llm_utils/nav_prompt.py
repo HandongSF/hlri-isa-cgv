@@ -26,7 +26,7 @@ CATEGORIES (use exactly these keys)
 - "StrongCooccurs": nearby objects frequently co-existing with the target (e.g. when target is `tv` the cooccurs can be `sofa`, etc.).
 - "Gateways": entrances or passages guiding movement toward spaces likely containing the target.
   • Always include "doorway".
-- "Lookalikes": visually similar objects that may cause false detections (e.g., mirror for tv, trash bin for plant).
+- "Lookalikes": visually similar objects that may cause false detections (e.g., picture frame for tv, trash bin for plant).
 
 STYLE & CONSTRAINTS
 1) Output lowercase noun phrases only; each item ≤ 3 words; no numbers; no hyphens/slashes; no duplicates.
