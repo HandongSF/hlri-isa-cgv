@@ -133,7 +133,7 @@ class GPT4V_Planner:
         _plan_t0 = time.perf_counter()
 
         # 1) LLM로 진행 방향/priors 결정
-        direction, _ = self.query_gpt4v(pano_images)
+        direction, vlm_obj_detected = self.query_gpt4v(pano_images)
         direction_image = pano_images[direction]  # RGB
 
         # 2) YOLOE 클래스 프롬프트 보장 (priors 반영)
@@ -141,8 +141,12 @@ class GPT4V_Planner:
 
         # 3) priors-기반 웨이포인트 선택을 apply_priors_on_image로 통일
         #    - 이 함수가 YOLOE 박스 → priors 스코어링 → 바닥 폴백까지 수행
-        goal_image_rgb, debug_mask, pri_flag, obj_detected, vis_rgb = self.apply_priors_on_image(direction_image)
+        goal_image_rgb, debug_mask, pri_flag, bb_obj_detected, vis_rgb = self.apply_priors_on_image(direction_image)
 
+        obj_detected = False
+        if bb_obj_detected and vlm_obj_detected:
+            obj_detected = True
+        
         # 4) 디버그 이미지에 사각형 찍기 (PixNav 스타일)  # <-- changed
         debug_image = np.array(direction_image)  # copy
         ys, xs = np.where(debug_mask > 0)
@@ -406,8 +410,8 @@ class GPT4V_Planner:
         # 내부 상수 (기존 로직과 동일)
         WEIGHTS = {"supports": 0.4, "cooccurs": 0.2, "gateways": 0.4, "lookalikes": 0.6}
         BETA_AREA, GAMMA_BOTTOM = 0.03, 0.05
-        MIN_TARGET_CONF = 0.35
-        LA_IOU_THRES    = 0.90
+        MIN_TARGET_CONF = 0.30
+        LA_IOU_THRES    = 0.99
         
 
         # priors 셋
