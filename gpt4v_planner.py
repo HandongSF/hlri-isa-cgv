@@ -410,7 +410,7 @@ class GPT4V_Planner:
         # 내부 상수 (기존 로직과 동일)
         WEIGHTS = {"supports": 0.4, "cooccurs": 0.2, "gateways": 0.4, "lookalikes": 0.6}
         BETA_AREA, GAMMA_BOTTOM = 0.03, 0.05
-        MIN_TARGET_CONF = 0.30
+        MIN_TARGET_CONF = 0.20
         LA_IOU_THRES    = 0.99
         
 
@@ -555,7 +555,7 @@ class GPT4V_Planner:
                         la_inds = [k for k, ci in enumerate(cls_np) if _name(ci) in lookalikes]
                         la_conflict = any(_iou(top, lk) >= LA_IOU_THRES for lk in la_inds)
                         box_area_norm = _norm_area(top)      # box 픽셀수 / (W*H)
-                        big_enough = (box_area_norm >= 0.125) # 1/8 이상이면 True
+                        big_enough = (box_area_norm >= 0.0625) # 1/16 이상이면 True
                         obj_detected = bool(conf_ok and not la_conflict and big_enough)
                         pri_flag = True
                         # 목표 발견 시 방향 점수는 높은 기준으로
