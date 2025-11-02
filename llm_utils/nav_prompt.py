@@ -24,13 +24,12 @@ GOAL
 CATEGORIES (use exactly these keys)
 - "Supports": structures/furniture that directly hold, mount, or enclose the target (e.g., when target is `tv` the supports can be `tv stand`, etc.).
 - "StrongCooccurs": nearby objects frequently co-existing with the target (e.g. when target is `tv` the cooccurs can be `sofa`, etc.).
-- "Gateways": entrances or passages guiding movement toward spaces likely containing the target.
-  • Always include "doorway".
-- "Lookalikes": visually similar objects that may cause false detections (e.g., picture frame for tv, trash bin for plant).
+- "Gateways": entrances or passages guiding movement toward spaces likely containing the target. Always include "doorway".
+- "Lookalikes": visually similar objects that may cause false detections (e.g., picture frame for tv, trash bin for plant). Never include Synonyms.
 
 STYLE & CONSTRAINTS
 1) Output lowercase noun phrases only; each item ≤ 3 words; no numbers; no hyphens/slashes; no duplicates.
-2) Do not include the target itself or its direct synonyms in Supports/StrongCooccurs/Gateways. Synonyms or near-synonyms may appear in Lookalikes if they are genuinely confusable (e.g., "microwave" for "tv").
+2) Do not include the target itself or its direct synonyms in Supports/StrongCooccurs/Gateways. 
 3) Prefer common, detector-friendly household terms (e.g., "tv stand", "coffee table", "nightstand", "sink").
 4) No rooms in StrongCooccurs (put room access in Gateways). No explanations or extra keys.
 5) Use the classes listed below; DO NOT add new classes beyond this list.
@@ -878,7 +877,6 @@ chain
 chain saw
 chair
 chairlift
-daybed
 chalet
 chalice
 chalk
@@ -2212,7 +2210,6 @@ hotplate
 hourglass
 house
 house exterior
-houseplant
 hoverboard
 howler
 huddle
@@ -2554,7 +2551,6 @@ lose
 lottery
 lotus
 love
-loveseat
 luggage
 lumber
 lumberjack
