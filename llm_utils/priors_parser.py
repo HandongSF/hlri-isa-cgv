@@ -11,7 +11,7 @@ _BRACED_RE  = re.compile(r"\{.*\}", flags=re.DOTALL)
 
 # 형식 규칙(개수 제한 없음; 형식만 체크)
 MAX_ITEM_WORDS   = 3
-REQ_GATEWAYS     = ["doorway"]  # 항상 포함 보장
+REQ_GATEWAYS     = ["gateway"]  # 항상 포함 보장
 
 # ----------------- 유틸 -----------------
 def _lower_list(x: Any) -> List[str]:
@@ -89,7 +89,7 @@ def _filter_item_len(items: List[str], violations: List[str], field_name: str) -
     return out
 
 def _ensure_gateways_required(gws: List[str]) -> List[str]:
-    """gateways에 doorway가 항상 포함되도록 보강(중복 제거, 개수 제한 없음)."""
+    """gateways에 gateway가 항상 포함되도록 보강(중복 제거, 개수 제한 없음)."""
     s = set(gws)
     add = [g for g in REQ_GATEWAYS if g not in s]
     return _dedup(add + gws)
@@ -254,3 +254,39 @@ def parse_decision_json(raw_text: str, valid_angles: Optional[Iterable[int]] = N
         "violations": violations,
         "raw_blob": blob,
     }
+
+def dedupe_preserve_order(items: Iterable[str]) -> List[str]:
+    """
+    리스트에서 중복 항목 제거(순서 보존).
+    비교 키는 str.strip().lower()를 사용하되, 반환은 원본 표기를 보존한다.
+    """
+    seen = set()
+    out: List[str] = []
+    for x in items or []:
+        k = x.strip().lower() if isinstance(x, str) else x
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(x)
+    return out
+
+def parse_prior_class_block(block: str) -> List[str]:
+    """
+    PRIOR_CLASS_LIST 블록에서 'VALID_CLASSES:' 아래 라인들을 파싱해
+    소문자 문자열 리스트로 반환(빈 줄 제외, 순서 보존·중복 제거).
+    """
+    if not isinstance(block, str):
+        return []
+    lines = block.splitlines()
+    started = False
+    raw: List[str] = []
+    for ln in lines:
+        s = (ln or "").strip()
+        if not s:
+            continue
+        if s.lower().startswith("valid_classes"):
+            started = True
+            continue
+        if started:
+            raw.append(s.lower())
+    return dedupe_preserve_order(raw)

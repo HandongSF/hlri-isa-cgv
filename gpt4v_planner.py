@@ -1,7 +1,7 @@
 import numpy as np
 from llm_utils.gpt_request import gptv_response, gpt_response
 from llm_utils.nav_prompt import GPT4V_PROMPT, PRIORS_PROMPT, PRIOR_CLASS_LIST
-from llm_utils.priors_parser import parse_llm_json, extract_priors, parse_decision_json
+from llm_utils.priors_parser import parse_llm_json, extract_priors, parse_decision_json, dedupe_preserve_order, parse_prior_class_block
 from cv_utils.yoloe_tools import *
 from typing import List, Dict, Any, Tuple, Optional, Union
 import cv2
@@ -16,7 +16,7 @@ class GPT4V_Planner:
     def __init__(self,yoloe_model):
         self.gptv_trajectory = []
         self.yoloe_model = yoloe_model
-        self.detect_objects = ['bed','sofa','chair','plant','tv monitor','toilet','floor']
+        self.detect_objects = ['bed','sofa','chair','houseplant','tv monitor','toilet']
         # ---- LLM/플래너/모듈별 시간 계측 저장소 ----
         self.llm_call_count = 0
         self.llm_durations = []          # 각 LLM 호출 소요시간(초)
@@ -65,6 +65,8 @@ class GPT4V_Planner:
         # translation to align for the detection model
         if object_goal == 'tv_monitor':
             self.object_goal = 'tv monitor'
+        elif object_goal == 'plant':
+            self.object_goal = 'houseplant'
         else:
             self.object_goal = object_goal
 
@@ -141,11 +143,9 @@ class GPT4V_Planner:
 
         # 3) priors-기반 웨이포인트 선택을 apply_priors_on_image로 통일
         #    - 이 함수가 YOLOE 박스 → priors 스코어링 → 바닥 폴백까지 수행
-        goal_image_rgb, debug_mask, pri_flag, bb_obj_detected, vis_rgb = self.apply_priors_on_image(direction_image)
+        goal_image_rgb, debug_mask, pri_flag, bb_obj_detected, vis_rgb = self.apply_priors_on_image(direction_image, MIN_TARGET_CONF=0.10, MIN_TARGET_AREA=0.0625)
 
-        obj_detected = False
-        if bb_obj_detected and vlm_obj_detected:
-            obj_detected = True
+        obj_detected = vlm_obj_detected and bb_obj_detected
         
         # 4) 디버그 이미지에 사각형 찍기 (PixNav 스타일)  # <-- changed
         debug_image = np.array(direction_image)  # copy
@@ -183,12 +183,14 @@ class GPT4V_Planner:
         gateways   = set(map(str.lower, (priors or {}).get("Gateways", []) or []))
         lookalikes = set(map(str.lower, (priors or {}).get("Lookalikes", []) or []))
 
-        # 모든 priors (lookalikes 포함)을 YOLOE 클래스셋에 포함
-        extra_positive = sorted(
+        # 1) PRIOR_CLASS_LIST 정적 어휘
+        static_list = parse_prior_class_block(PRIOR_CLASS_LIST)
+
+        # 2) priors + 바닥 alias + 정적 어휘 결합 → 중복 제거
+        extra_positive = list(
             supports | cooccurs | gateways | lookalikes | set(floor_aliases)
         )
-        prompt_classes = list(dict.fromkeys(self.detect_objects + extra_positive))
-
+        prompt_classes = dedupe_preserve_order(self.detect_objects+ static_list + extra_positive)
 
         # 모델 클래스셋 적용 (변경 시에만)
         if self._last_prompt != tuple(prompt_classes):
@@ -223,7 +225,7 @@ class GPT4V_Planner:
             t0 = time.perf_counter()
             try:
                 # 이미지 없이 텍스트 전용 호출
-                raw_answer = gpt_response(text_content, system_prompt=PRIORS_PROMPT + PRIOR_CLASS_LIST)
+                raw_answer = gpt_response(text_content + PRIOR_CLASS_LIST, system_prompt=PRIORS_PROMPT)
             except Exception:
                 raw_answer = None
             finally:
@@ -377,7 +379,9 @@ class GPT4V_Planner:
     def apply_priors_on_image(
         self,
         image_or_pano,                          # np.ndarray (RGB) or Sequence[np.ndarray]
-        conf_threshold: float = 0.10,
+        conf_threshold: float = 0.05,
+        MIN_TARGET_CONF: float = 0.35,
+        MIN_TARGET_AREA: float = 0.02,
         iou_threshold: float = 0.50,
         return_boxes: bool = False
     ):
@@ -410,7 +414,6 @@ class GPT4V_Planner:
         # 내부 상수 (기존 로직과 동일)
         WEIGHTS = {"supports": 0.4, "cooccurs": 0.2, "gateways": 0.4, "lookalikes": 0.6}
         BETA_AREA, GAMMA_BOTTOM = 0.03, 0.05
-        MIN_TARGET_CONF = 0.15
         LA_IOU_THRES    = 0.99
         
 
@@ -555,7 +558,7 @@ class GPT4V_Planner:
                         la_inds = [k for k, ci in enumerate(cls_np) if _name(ci) in lookalikes]
                         la_conflict = any(_iou(top, lk) >= LA_IOU_THRES for lk in la_inds)
                         box_area_norm = _norm_area(top)      # box 픽셀수 / (W*H)
-                        big_enough = (box_area_norm >= 0.0625) # 1/16 이상이면 True
+                        big_enough = (box_area_norm >= MIN_TARGET_AREA) 
                         obj_detected = bool(conf_ok and not la_conflict and big_enough)
                         pri_flag = True
                         # 목표 발견 시 방향 점수는 높은 기준으로
