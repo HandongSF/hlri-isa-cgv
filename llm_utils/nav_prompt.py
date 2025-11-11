@@ -43,6 +43,7 @@ STRICT RULES
 KNOWN LOOKALIKE PAIRS (must enforce when present in VALID_CLASSES)
 - If target is "sofa": include "chair" in "Lookalikes".
 - If target is "chair": include "sofa" in "Lookalikes".
+- if target is "plant": include "pot" in "Supports".
 
 OUTPUT FORMAT (critical)
 - Return EXACTLY one single-line JSON object with keys in this order:
@@ -73,7 +74,7 @@ dresser
 wardrobe
 cabinet
 bookshelf
-pillow
+pot
 shelf
 media console
 tv stand
