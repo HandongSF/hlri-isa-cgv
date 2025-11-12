@@ -88,8 +88,6 @@ washing machine
 floor
 gateway
 window
-shoe rack
-coat rack
 laundry basket
 trash bin
 whiteboard
@@ -99,17 +97,11 @@ refrigerator
 microwave
 oven
 stove
-sink
-dishwasher
-kettle
-coffee maker
 printer
 router
 speaker
 laptop
 desktop tower
-air purifier
 fire extinguisher
-smoke detector
 picture frame
 """
