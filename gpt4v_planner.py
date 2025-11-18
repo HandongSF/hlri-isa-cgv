@@ -2,7 +2,7 @@ import numpy as np
 from llm_utils.gpt_request import gptv_response, gpt_response
 from llm_utils.nav_prompt import GPT4V_PROMPT, PRIORS_PROMPT, PRIOR_CLASS_LIST
 from llm_utils.priors_parser import parse_llm_json, extract_priors, parse_decision_json, dedupe_preserve_order, parse_prior_class_block
-from cv_utils.yoloe_tools import *
+from cv_utils.detection_tools import openset_detection, draw_detections_bgr
 from typing import List, Dict, Any, Tuple, Optional, Union
 import cv2
 import time  # <-- 추가
@@ -13,10 +13,10 @@ import math
 
 
 class GPT4V_Planner:
-    def __init__(self,yoloe_model):
+    def __init__(self,dino_model):
         self.gptv_trajectory = []
-        self.yoloe_model = yoloe_model
-        self.detect_objects = ['bed','sofa','chair','houseplant','tv monitor','toilet']
+        self.dino_model = dino_model
+        self.detect_objects = ['bed','sofa','chair','indoor plant','tv monitor','toilet']
         # ---- LLM/플래너/모듈별 시간 계측 저장소 ----
         self.llm_call_count = 0
         self.llm_durations = []          # 각 LLM 호출 소요시간(초)
@@ -66,7 +66,7 @@ class GPT4V_Planner:
         if object_goal == 'tv_monitor':
             self.object_goal = 'tv monitor'
         elif object_goal == 'plant':
-            self.object_goal = 'houseplant'
+            self.object_goal = 'indoor plant'
         else:
             self.object_goal = object_goal
 
@@ -190,15 +190,11 @@ class GPT4V_Planner:
         extra_positive = list(
             supports | cooccurs | gateways | lookalikes | set(floor_aliases)
         )
-        prompt_classes = dedupe_preserve_order(self.detect_objects+ static_list + extra_positive)
-
-        # 모델 클래스셋 적용 (변경 시에만)
-        if self._last_prompt != tuple(prompt_classes):
-            set_yoloe_classes(self.yoloe_model, prompt_classes)
-            self._last_prompt = tuple(prompt_classes)
+        prompt_classes = dedupe_preserve_order(self.detect_objects + static_list + extra_positive)
 
         self._prompt_classes = prompt_classes
         self._floor_aliases = floor_aliases
+        self._last_prompt = tuple(prompt_classes)
 
     def query_priors_text(self):
         """
@@ -430,15 +426,13 @@ class GPT4V_Planner:
             H, W = rgb.shape[:2]
             debug_mask = np.zeros((H, W), dtype=np.uint8)
 
-            det = yoloe_detection(
+            det = openset_detection(
                 image=rgb,
                 target_classes=prompt_classes,
-                model=self.yoloe_model,
+                dino_model=self.dino_model,
                 box_threshold=conf_threshold,
-                iou_threshold=iou_threshold,
-                run_extra_nms=False,
-                use_text_prompt=False,
-                retina_masks=False,   # 박스만
+                text_threshold=0.3,          # 필요하면 인자화 가능
+                nms_threshold=iou_threshold,  # IoU threshold 그대로 사용
             )
 
             # 안전 추출 + numpy 표준화 헬퍼

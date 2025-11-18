@@ -16,7 +16,7 @@ from config_utils import hm3d_config
 from gpt4v_planner import GPT4V_Planner
 from policy_agent import Policy_Agent
 from habitat.utils.visualizations.maps import colorize_draw_agent_and_fit_to_height
-from cv_utils.yoloe_tools import initialize_yoloe_model
+from cv_utils.detection_tools import initialize_dino_model 
 from omegaconf import OmegaConf, open_dict
 
 
@@ -51,22 +51,11 @@ with open_dict(habitat_config.habitat.task.measurements):
 
 habitat_env = habitat.Env(habitat_config)
 
-# ✅ YOLOE 초기화 (세그 가중치 필수)
-DETECT_OBJECTS = ['bed', 'sofa', 'chair', 'plant', 'tv', 'toilet', 'floor']
-yoloe_model = initialize_yoloe_model(
-    weights=YOLOE_CHECKPOINT_PATH,   # 세그 지원 가중치
-    device="cuda:0",
-    classes=DETECT_OBJECTS,       # 텍스트 프롬프트 기본 세팅
-    prompt_mode="text",
-)
+# ✅ GroundingDINO 초기화
+dino_model = detection_model = initialize_dino_model()
 
 # ✅ 플래너/에이전트
-try:
-    nav_planner = GPT4V_Planner(yoloe_model)
-except TypeError:
-    # fallback: 옛 시그니처 호환
-    nav_planner = GPT4V_Planner(yoloe_model, yoloe_model)
-
+nav_planner = GPT4V_Planner(dino_model)
 nav_executor = Policy_Agent(model_path=POLICY_CHECKPOINT)
 evaluation_metrics = []
 
