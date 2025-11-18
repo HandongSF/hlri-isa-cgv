@@ -78,7 +78,6 @@ pot
 shelf
 media console
 tv stand
-monitor
 lamp
 floor lamp
 ceiling light
@@ -104,4 +103,7 @@ laptop
 desktop tower
 fire extinguisher
 picture frame
+dishwasher
+countertop
+soundbar
 """
