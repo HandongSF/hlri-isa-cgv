@@ -64,7 +64,7 @@ class GPT4V_Planner:
     def reset(self,object_goal):
         # translation to align for the detection model
         if object_goal == 'tv_monitor':
-            self.object_goal = 'tv'
+            self.object_goal = 'tv monitor'
         elif object_goal == 'plant':
             self.object_goal = 'indoor plant'
         else:
@@ -408,7 +408,7 @@ class GPT4V_Planner:
             floor_aliases  = self._floor_aliases
 
         # 내부 상수 (기존 로직과 동일)
-        WEIGHTS = {"supports": 0.4, "cooccurs": 0.2, "gateways": 0.4, "lookalikes": 0.6}
+        WEIGHTS = {"supports": 0.1, "cooccurs": 0.1, "gateways": 0.2, "lookalikes": 0.1}
         BETA_AREA, GAMMA_BOTTOM = 0.03, 0.05
         LA_IOU_THRES    = 0.99
         
@@ -431,7 +431,7 @@ class GPT4V_Planner:
                 target_classes=prompt_classes,
                 dino_model=self.dino_model,
                 box_threshold=conf_threshold,
-                text_threshold=0.2,          # 필요하면 인자화 가능
+                text_threshold=0.25,          # 필요하면 인자화 가능
                 nms_threshold=iou_threshold,  # IoU threshold 그대로 사용
             )
 
