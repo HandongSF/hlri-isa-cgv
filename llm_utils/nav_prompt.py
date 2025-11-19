@@ -62,7 +62,7 @@ sofa
 chair
 toilet
 tv monitor
-houseplant
+indoor plant
 sink
 bathtub
 table

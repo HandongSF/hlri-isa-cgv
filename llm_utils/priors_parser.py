@@ -11,7 +11,7 @@ _BRACED_RE  = re.compile(r"\{.*\}", flags=re.DOTALL)
 
 # 형식 규칙(개수 제한 없음; 형식만 체크)
 MAX_ITEM_WORDS   = 3
-REQ_GATEWAYS     = ["gateway"]  # 항상 포함 보장
+REQ_GATEWAYS     = ["gateway", "entrance", "opened door"]  # 항상 포함 보장
 
 # ----------------- 유틸 -----------------
 def _lower_list(x: Any) -> List[str]:

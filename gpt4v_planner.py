@@ -64,7 +64,7 @@ class GPT4V_Planner:
     def reset(self,object_goal):
         # translation to align for the detection model
         if object_goal == 'tv_monitor':
-            self.object_goal = 'tv monitor'
+            self.object_goal = 'tv'
         elif object_goal == 'plant':
             self.object_goal = 'indoor plant'
         else:
@@ -376,7 +376,7 @@ class GPT4V_Planner:
         self,
         image_or_pano,                          # np.ndarray (RGB) or Sequence[np.ndarray]
         conf_threshold: float = 0.05,
-        MIN_TARGET_CONF: float = 0.65,
+        MIN_TARGET_CONF: float = 0.35,
         MIN_TARGET_AREA: float = 0.02,
         iou_threshold: float = 0.50,
         return_boxes: bool = False
@@ -431,7 +431,7 @@ class GPT4V_Planner:
                 target_classes=prompt_classes,
                 dino_model=self.dino_model,
                 box_threshold=conf_threshold,
-                text_threshold=0.3,          # 필요하면 인자화 가능
+                text_threshold=0.2,          # 필요하면 인자화 가능
                 nms_threshold=iou_threshold,  # IoU threshold 그대로 사용
             )
 
