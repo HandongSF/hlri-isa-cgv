@@ -37,6 +37,7 @@ def get_args():
 
 
 args = get_args()
+VLM_PERIOD = 4  # VLM 플래너 호출 주기 (웨이포인트 수 기준)
 habitat_config = hm3d_config(stage='val', episodes=args.eval_episodes)
 print("scene_dataset =", habitat_config.habitat.simulator.scene_dataset)
 print("scenes_dir    =", habitat_config.habitat.dataset.scenes_dir)
@@ -95,6 +96,7 @@ for i in tqdm(range(args.eval_episodes)):
     heading_offset = 0
     # step counters to rate-limit expensive resets
     step_counter = 0
+    waypoint_count = 0
     start_geodesic_m = float(habitat_env.get_metrics()['distance_to_goal'])  
     prev_boxes = None
     curr_boxes = None
@@ -121,6 +123,7 @@ for i in tqdm(range(args.eval_episodes)):
     goal_image, goal_mask, debug_image, vis_rgb, goal_rotate,  pri_flag, obj_detected = nav_planner.make_plan(episode_images[-12:])
     pending_verify = (pri_flag and (not obj_detected))
     goal_flag = obj_detected
+    waypoint_count = 1
     for j in range(min(11 - goal_rotate, 1 + goal_rotate)):
         if goal_rotate <= 6:
             obs = habitat_env.step(3)
@@ -131,7 +134,6 @@ for i in tqdm(range(args.eval_episodes)):
             episode_images.append(obs['rgb'])
             episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
         step_counter += 1
-
     episode_images.append(vis_rgb)
     episode_images.append(vis_rgb)
     nav_executor.reset(goal_image, goal_mask)
@@ -236,55 +238,15 @@ for i in tqdm(range(args.eval_episodes)):
             
             prev_boxes = getattr(nav_planner, "_last_bboxes", []) if prev_boxes is None else prev_boxes
 
-            # --- (NEW) 동일 스캔: -90, -60, -30, 0, +30, +60, +90 ---
-            pano7 = []
-            angles7 = []
+            # ✅ 새 로직: 웨이포인트마다 VLM vs priors-only 선택
+            waypoint_count += 1
+            use_vlm_round = ((waypoint_count - 1) % VLM_PERIOD == 0)
 
-            # 1) 먼저 왼쪽으로 3번 돌아 -90° 도달
-            for _ in range(3):
-                if habitat_env.episode_over: break
-                obs = habitat_env.step(3)  # 좌회전(-30°)
-                episode_images.append(obs['rgb'])
-                episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
-                step_counter += 1
-
-            # -90° 프레임 기록
-            pano7.append(episode_images[-1]); angles7.append(-90)
-
-            # 2) -90에서 시작해 우측으로 6스텝 스윕해 +90°까지 수집
-            for k in range(6):
-                if habitat_env.episode_over: break
-                obs = habitat_env.step(2)  # 우회전(+30°)
-                episode_images.append(obs['rgb'])
-                episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
-                step_counter += 1
-                pano7.append(obs['rgb'])
-                angles7.append(-90 + 30*(k+1))  # -60, -30, 0, +30, +60, +90
-
-            if habitat_env.episode_over or len(pano7) == 0:
-                break
-
-            # priors 기반 방향 선택(7장)
-            (
-                direction_image,   # goal_rgb
-                debug_mask,
-                pri_flag,
-                obj_detected,
-                debug_vis,         # vis_rgb
-                curr_boxes,
-                best_idx
-            ) = nav_planner.apply_priors_on_image(pano7, return_boxes=True)
-
-
-            if nav_planner.are_bboxes_similar(
-                prev_boxes, curr_boxes,
-                class_sensitive=False,
-                ignore_classes=['floor','ground','flooring'],
-                return_detail=False
-            ):
-                # 정책이 앞으로 가지 못한다고 판단 → 다시 VLM 호출
+            if use_vlm_round:
+                # ----- (A) 360° 스캔 + make_plan (무거운 VLM 라운드) -----
                 for _ in range(11):
-                    if habitat_env.episode_over: break
+                    if habitat_env.episode_over:
+                        break
                     obs = habitat_env.step(3)
                     episode_images.append(obs['rgb'])
                     episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
@@ -300,8 +262,10 @@ for i in tqdm(range(args.eval_episodes)):
                     obj_detected
                 ) = nav_planner.make_plan(episode_images[-12:])
 
+                # 정면 맞추기
                 for j in range(min(11 - goal_rotate, 1 + goal_rotate)):
-                    if habitat_env.episode_over: break
+                    if habitat_env.episode_over:
+                        break
                     if goal_rotate <= 6:
                         obs = habitat_env.step(3)
                     else:
@@ -312,12 +276,52 @@ for i in tqdm(range(args.eval_episodes)):
 
                 episode_images.append(vis_rgb2); episode_images.append(vis_rgb2)
 
-                # make_plan 내부에서 apply_priors_on_image가 다시 호출되어 _last_bboxes 갱신됨
+                # make_plan 내부에서 _last_bboxes 갱신
                 prev_boxes = getattr(nav_planner, "_last_bboxes", [])
                 pending_verify = (pri_flag and (not obj_detected))
                 goal_flag = obj_detected
 
             else:
+                # ----- (B) Priors-only: -90 ~ +90° pano7 + apply_priors_on_image -----
+                pano7 = []
+                angles7 = []
+
+                # 1) 먼저 왼쪽으로 3번 돌아 -90° 도달
+                for _ in range(3):
+                    if habitat_env.episode_over:
+                        break
+                    obs = habitat_env.step(3)  # 좌회전(-30°)
+                    episode_images.append(obs['rgb'])
+                    episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                    step_counter += 1
+
+                # -90° 프레임 기록
+                pano7.append(episode_images[-1]); angles7.append(-90)
+
+                # 2) -90에서 시작해 우측으로 6스텝 스윕해 +90°까지 수집
+                for k in range(6):
+                    if habitat_env.episode_over:
+                        break
+                    obs = habitat_env.step(2)  # 우회전(+30°)
+                    episode_images.append(obs['rgb'])
+                    episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                    step_counter += 1
+                    pano7.append(obs['rgb'])
+                    angles7.append(-90 + 30*(k+1))  # -60, -30, 0, +30, +60, +90
+
+                if habitat_env.episode_over or len(pano7) == 0:
+                    break
+
+                (
+                    direction_image,   # goal_rgb
+                    debug_mask,
+                    pri_flag,
+                    obj_detected,
+                    debug_vis,         # vis_rgb
+                    curr_boxes,
+                    best_idx
+                ) = nav_planner.apply_priors_on_image(pano7, return_boxes=True)
+
                 # === 스캔 종료 헤딩(+90)에서 선택 각도로 회전 ===
                 cur_deg = int(angles7[-1])           # +90
                 sel_deg = int(angles7[best_idx])     # {-90,-60,-30,0,30,60,90}
@@ -340,13 +344,12 @@ for i in tqdm(range(args.eval_episodes)):
 
                 episode_images.append(debug_vis); episode_images.append(debug_vis)
                 goal_image, goal_mask = direction_image, debug_mask
-                # 아직 최종 확신 아님: 도착 후 verify 단계에서 확정
                 pending_verify = pri_flag and (not obj_detected)
                 goal_flag = obj_detected
                 prev_boxes = curr_boxes
 
             print("action", action)
-            print("goal _flag", goal_flag)
+            print("goal_flag", goal_flag)
             print("step_counter", step_counter)
             step_counter = 0
             nav_executor.reset(goal_image, goal_mask)
