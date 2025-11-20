@@ -172,69 +172,69 @@ for i in tqdm(range(args.eval_episodes)):
                     heading_offset += 1
                     step_counter += 1
 
-            # ===== 최종 확인 로직 (웨이포인트 도착 & 그 지점이 의심타겟이었을 때) =====
-            if pending_verify and action == 0:
-                # 여기서 한 바퀴 돌면서 make_plan()으로 다시 pri_flag 체크
-                # (너 이미 아래쪽에서 하는 360 스캔 코드 재사용 가능)
+            # # ===== 최종 확인 로직 (웨이포인트 도착 & 그 지점이 의심타겟이었을 때) =====
+            # if pending_verify and action == 0:
+            #     # 여기서 한 바퀴 돌면서 make_plan()으로 다시 pri_flag 체크
+            #     # (너 이미 아래쪽에서 하는 360 스캔 코드 재사용 가능)
 
-                # 1) 현 위치에서 주변을 스캔해서 episode_images에 쌓아
-                for _ in range(11):
-                    if habitat_env.episode_over: break
-                    obs = habitat_env.step(3)  # 좌로 도는 등 30도씩 회전
-                    episode_images.append(obs['rgb'])
-                    episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
-                    step_counter += 1
+            #     # 1) 현 위치에서 주변을 스캔해서 episode_images에 쌓아
+            #     for _ in range(11):
+            #         if habitat_env.episode_over: break
+            #         obs = habitat_env.step(3)  # 좌로 도는 등 30도씩 회전
+            #         episode_images.append(obs['rgb'])
+            #         episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+            #         step_counter += 1
 
-                # 2) 최근 12장의 뷰로 make_plan 호출            
-                (
-                    verify_goal_image,
-                    verify_goal_mask,
-                    verify_debug_image,
-                    verify_vis,
-                    verify_rotate,
-                    verify_pri_flag,
-                    verify_obj_detected
-                ) = nav_planner.make_plan(episode_images[-12:])
+            #     # 2) 최근 12장의 뷰로 make_plan 호출            
+            #     (
+            #         verify_goal_image,
+            #         verify_goal_mask,
+            #         verify_debug_image,
+            #         verify_vis,
+            #         verify_rotate,
+            #         verify_pri_flag,
+            #         verify_obj_detected
+            #     ) = nav_planner.make_plan(episode_images[-12:])
 
-                # 3) make_plan이 알려준 best 방향으로 정면 맞추기 (네가 이미 아래서 하던 거 복붙)
-                for j in range(min(11 - verify_rotate, 1 + verify_rotate)):
-                    if habitat_env.episode_over: break
-                    if verify_rotate <= 6:
-                        obs = habitat_env.step(3)
-                    else:
-                        obs = habitat_env.step(2)
-                    episode_images.append(obs['rgb'])
-                    episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
-                    step_counter += 1
+            #     # 3) make_plan이 알려준 best 방향으로 정면 맞추기 (네가 이미 아래서 하던 거 복붙)
+            #     for j in range(min(11 - verify_rotate, 1 + verify_rotate)):
+            #         if habitat_env.episode_over: break
+            #         if verify_rotate <= 6:
+            #             obs = habitat_env.step(3)
+            #         else:
+            #             obs = habitat_env.step(2)
+            #         episode_images.append(obs['rgb'])
+            #         episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+            #         step_counter += 1
 
-                episode_images.append(verify_vis)
-                episode_images.append(verify_vis)
+            #     episode_images.append(verify_vis)
+            #     episode_images.append(verify_vis)
 
-                # 4) 최종 판정
-                if verify_obj_detected:
-                    # 이제 진짜 목표물 눈앞에 있는 걸로 확정
-                    goal_flag = True
-                    # 성공 처리: 에피소드 끝내고 싶으면 continue
-                    pending_verify = False
-                    continue
+            #     # 4) 최종 판정
+            #     if verify_obj_detected:
+            #         # 이제 진짜 목표물 눈앞에 있는 걸로 확정
+            #         goal_flag = True
+            #         # 성공 처리: 에피소드 끝내고 싶으면 continue
+            #         pending_verify = False
+            #         continue
 
-                elif verify_pri_flag:
-                    # 아직도 확신 못 했음 -> 계속 탐색
-                    # 이 시점의 goal을 업데이트하고 계속 가자
-                    pending_verify = True
-                    goal_flag = False
-                    prev_boxes = getattr(nav_planner, "_last_bboxes", [])
-                else:
-                    # 완전 실패: 목표물 못 찾음 → 다시 플래너 호출
-                    pending_verify = False
-                    goal_flag = False
-                    prev_boxes = getattr(nav_planner, "_last_bboxes", [])
+            #     elif verify_pri_flag:
+            #         # 아직도 확신 못 했음 -> 계속 탐색
+            #         # 이 시점의 goal을 업데이트하고 계속 가자
+            #         pending_verify = True
+            #         goal_flag = False
+            #         prev_boxes = getattr(nav_planner, "_last_bboxes", [])
+            #     else:
+            #         # 완전 실패: 목표물 못 찾음 → 다시 플래너 호출
+            #         pending_verify = False
+            #         goal_flag = False
+            #         prev_boxes = getattr(nav_planner, "_last_bboxes", [])
 
-                # 새 goal로 정책 리셋
-                nav_executor.reset(verify_goal_image, verify_goal_mask)
+            #     # 새 goal로 정책 리셋
+            #     nav_executor.reset(verify_goal_image, verify_goal_mask)
 
-                # 그리고 바로 다음 while 루프 반복으로 넘어감
-                continue
+            #     # 그리고 바로 다음 while 루프 반복으로 넘어감
+            #     continue
             
             prev_boxes = getattr(nav_planner, "_last_bboxes", []) if prev_boxes is None else prev_boxes
 
