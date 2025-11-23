@@ -559,48 +559,31 @@ class GPT4V_Planner:
                         la_conflict = any(_iou(top, lk) >= LA_IOU_THRES for lk in la_inds)
                         box_area_norm = _norm_area(top)      # box 픽셀수 / (W*H)
                         big_enough = (box_area_norm >= MIN_TARGET_AREA) 
-                        obj_detected = bool(conf_ok and not la_conflict and big_enough)
+                        obj_detected = bool(conf_ok and big_enough)
                         pri_flag = True
                         # 목표 발견 시 방향 점수는 높은 기준으로
                         dir_score = 1.0 + (float(box_conf[top]) if box_conf is not None else 0.0) * 0.5 \
                                     + 0.1 * _norm_area(top) + 0.05 * _bottom_bias(top)
 
-                # 2) 목표가 없거나(혹은 pri_flag=False지만) priors 기반 폴백 스코어
+                # 2) 목표가 없으면 floor-only 폴백
                 if not pri_flag:
-                    best_i, best_score, best_area = None, -1e9, -1.0
-                    for i, ci in enumerate(cls_np):
-                        name = _name(ci)
-                        if name in supports:
-                            base = WEIGHTS["supports"]
-                        elif name in cooccurs:
-                            base = WEIGHTS["cooccurs"]
-                        elif name in gateways:
-                            base = WEIGHTS["gateways"]
-                        elif name in lookalikes:
-                            base = WEIGHTS["lookalikes"]
-                        else:
-                            base = 0.0
+                    f_inds = [i for i, ci in enumerate(cls_np) if _name(ci) in floor_set]
 
-                        score = base \
-                                + BETA_AREA * _norm_area(i) \
-                                + GAMMA_BOTTOM * _bottom_bias(i)
-                        a = _area(i)
+                    if len(f_inds) > 0:
+                        # "가장 아래쪽 + 큰 박스" 기준
+                        # 아래쪽을 1순위( bottom_bias ), 넓이를 2순위( norm_area )
+                        top = max(
+                            f_inds,
+                            key=lambda i: (_bottom_bias(i), _norm_area(i))
+                        )
+                        px, py = _center(top)
 
-                        if (score > best_score) or (np.isclose(score, best_score) and a > best_area):
-                            best_i, best_score, best_area = i, score, a
-
-                    if best_i is not None:
-                        px, py = _center(best_i)
-                        dir_score = best_score
+                        # 파노라마 방향 비교용 점수도 bottom/area로만
+                        dir_score = float(_bottom_bias(top)) + 0.1 * float(_norm_area(top))
                     else:
-                        # floor 폴백 (아무 priors에도 안 걸릴 때)
-                        f_inds = [i for i, ci in enumerate(cls_np) if _name(ci) in floor_set]
-                        if len(f_inds) > 0:
-                            top = int(f_inds[np.argmax([_area(k) for k in f_inds])])
-                            px, py = _center(top)
-                            dir_score = WEIGHTS["supports"] * 0.1  # 아주 낮은 기본값
-                        else:
-                            dir_score = 0  # 진짜로 쓸만한 힌트 없음
+                        # 3) floor도 없으면 정면
+                        px, py = W // 2, H // 2
+                        dir_score = 0.0
 
             # --- PixNav-style mask draw (cv2.rectangle, filled) ---  # <-- changed
             r = 8
