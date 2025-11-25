@@ -28,7 +28,8 @@ def compute_metrics(df):
         raise KeyError(f"CSV에 필요한 컬럼이 없습니다: {missing}")
 
     # --- 타입 안정화 ---
-    for col in ["success","spl","episode_time_sec","num_steps","total_distance_m","llm_calls"]:
+    for col in ["success","spl","episode_time_sec","num_steps","total_distance_m","llm_calls",
+                "start_distance_to_goal","final_distance_to_goal"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # --- 기본 통계 ---
@@ -38,6 +39,11 @@ def compute_metrics(df):
     succ_mask   = df["success"] == 1.0
     spl_success_avg = float(df.loc[succ_mask, "spl"].mean()) if succ_mask.any() else 0.0
     spl_overall = float(df["spl"].mean())
+    mean_episode_time_sec = float(df["episode_time_sec"].mean()) if n_eps > 0 else 0.0
+
+    # ✅ NEW: 에피소드 평균 이동거리 / 평균 start distance
+    mean_total_distance_m   = float(df["total_distance_m"].mean()) if n_eps > 0 else 0.0
+    mean_start_distance_m   = float(df["start_distance_to_goal"].mean()) if n_eps > 0 else 0.0
 
     # ---합계(마이크로용)---
     eps = 1e-12
@@ -86,6 +92,12 @@ def compute_metrics(df):
 
         # 에피소드당 평균 호출수
         "llm_calls_per_episode": llm_calls_per_episode,
+        # 에피소드당 평균 소요시간
+        "mean_episode_time_sec": mean_episode_time_sec,
+
+        # ✅ NEW: 평균 이동거리 / 평균 start distance
+        "mean_total_distance_m": mean_total_distance_m,
+        "mean_start_distance_m": mean_start_distance_m,
     }
 
 def main():
@@ -99,21 +111,27 @@ def main():
     print(f"# Episodes                   : {m['N_episodes']}")
     print(f"# Successes                  : {m['N_success']}")
     print(f"SR                           : {m['SR']:.4f}")
-    print(f"SPL (성공 에피 평균/macro)   : {m['SPL_success_avg']:.4f}")
+    #print(f"SPL (성공 에피 평균/macro)   : {m['SPL_success_avg']:.4f}")
     print(f"SPL (전체 평균/macro)        : {m['SPL_overall']:.4f}")
 
     print("\n-- VLM 호출 효율 --")
-    print(f"LLM calls per meter (micro)  : {m['calls_per_meter_micro']:.6f} calls/m")
-    print(f"LLM calls per meter (macro)  : {m['calls_per_meter_macro']:.6f} calls/m")
-    #print(f"LLM calls per step  (micro)  : {m['calls_per_step_micro']:.6f} calls/step")
-    #print(f"LLM calls per step  (macro)  : {m['calls_per_step_macro']:.6f} calls/step")
+    print(f"LLM calls per meter (micro)  : {m['calls_per_meter_micro']:.3f} calls/m")
+    #print(f"LLM calls per meter (macro)  : {m['calls_per_meter_macro']:.4f} calls/m")
+    #print(f"LLM calls per step  (micro)  : {m['calls_per_step_micro']:.4f} calls/step")
+    #print(f"LLM calls per step  (macro)  : {m['calls_per_step_macro']:.4f} calls/step")
     print(f"LLM calls per episode        : {m['llm_calls_per_episode']:.3f} calls/ep")
 
     print("\n-- 연산 시간 효율 --")
-    print(f"sec per meter (micro)        : {m['sec_per_meter_micro']:.6f} s/m")
-    print(f"sec per meter (macro)        : {m['sec_per_meter_macro']:.6f} s/m")
-    print(f"sec per step  (micro)        : {m['sec_per_step_micro']:.6f} s/step")
-    print(f"sec per step  (macro)        : {m['sec_per_step_macro']:.6f} s/step")
+    print(f"sec per meter (micro)        : {m['sec_per_meter_micro']:.4f} s/m")
+    #print(f"sec per meter (macro)        : {m['sec_per_meter_macro']:.4f} s/m")
+    print(f"sec per step  (micro)        : {m['sec_per_step_micro']:.4f} s/step")
+    #print(f"sec per step  (macro)        : {m['sec_per_step_macro']:.4f} s/step")
+    print(f"avg episode time (macro)     : {m['mean_episode_time_sec']:.2f} s/ep")
+
+    # ✅ NEW 출력
+    print("\n-- 거리 통계 --")
+    print(f"avg traveled distance        : {m['mean_total_distance_m']:.2f} m/ep")
+    print(f"avg start dist to goal       : {m['mean_start_distance_m']:.2f} m")
 
 if __name__ == "__main__":
     main()
