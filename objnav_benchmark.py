@@ -51,20 +51,17 @@ with open_dict(habitat_config.habitat.task.measurements):
 
 habitat_env = habitat.Env(habitat_config)
 
-# ✅ YOLOE 초기화 (세그 가중치 필수)
 DETECT_OBJECTS = ['bed', 'sofa', 'chair', 'plant', 'tv', 'toilet', 'floor']
 yoloe_model = initialize_yoloe_model(
-    weights=YOLOE_CHECKPOINT_PATH,   # 세그 지원 가중치
+    weights=YOLOE_CHECKPOINT_PATH,
     device="cuda:0",
-    classes=DETECT_OBJECTS,       # 텍스트 프롬프트 기본 세팅
+    classes=DETECT_OBJECTS,
     prompt_mode="text",
 )
 
-# ✅ 플래너/에이전트
 try:
     nav_planner = GPT4V_Planner(yoloe_model)
 except TypeError:
-    # fallback: 옛 시그니처 호환
     nav_planner = GPT4V_Planner(yoloe_model, yoloe_model)
 
 nav_executor = Policy_Agent(model_path=POLICY_CHECKPOINT)
@@ -73,7 +70,7 @@ evaluation_metrics = []
 for i in tqdm(range(args.eval_episodes)):
     obs = habitat_env.reset()
 
-    # === NEW: 에피소드 총 이동거리(유클리드) 집계용 step 래핑 시작 ===
+    # Wrap step to accumulate per-episode Euclidean travel distance.
     _stats = {
         "dist_m": 0.0,
         "prev": np.array(habitat_env.sim.get_agent_state().position, dtype=np.float32),
@@ -86,14 +83,12 @@ for i in tqdm(range(args.eval_episodes)):
         _stats["prev"] = cur
         return obs_
     habitat_env.step = _instrumented_step
-    # ===========================================================
 
     dir = "./tmp/trajectory_%d" % i
     os.makedirs(dir, exist_ok=False)
     fps_writer = imageio.get_writer("%s/fps.mp4" % dir, fps=4)
     topdown_writer = imageio.get_writer("%s/metric.mp4" % dir, fps=4)
     heading_offset = 0
-    # step counters to rate-limit expensive resets
     step_counter = 0
     start_geodesic_m = float(habitat_env.get_metrics()['distance_to_goal'])  
     prev_boxes = None
@@ -105,14 +100,11 @@ for i in tqdm(range(args.eval_episodes)):
     episode_images = [obs['rgb']]
     episode_topdowns = [adjust_topdown(habitat_env.get_metrics())]
 
-    # ====== ⏱️ 에피소드 '계산' 시간 측정 시작 (비디오 I/O 제외) ======
+    # Measure per-episode compute time (exclude video I/O).
     episode_t0 = time.perf_counter()
 
-    # === 첫 호출 후 Priors 적용
     nav_planner.query_priors_text()
 
-    # a whole round planning process
-    # LLM 첫 호출 뒤 방향 정하고 출발
     for _ in range(11):
         obs = habitat_env.step(3)
         episode_images.append(obs['rgb'])
@@ -153,7 +145,6 @@ for i in tqdm(range(args.eval_episodes)):
         else:
             if habitat_env.episode_over:
                 break
-            # heading 조정
             for _ in range(0, abs(heading_offset)):
                 if habitat_env.episode_over:
                     break
@@ -170,20 +161,14 @@ for i in tqdm(range(args.eval_episodes)):
                     heading_offset += 1
                     step_counter += 1
 
-            # ===== 최종 확인 로직 (웨이포인트 도착 & 그 지점이 의심타겟이었을 때) =====
             if pending_verify and action == 0:
-                # 여기서 한 바퀴 돌면서 make_plan()으로 다시 pri_flag 체크
-                # (너 이미 아래쪽에서 하는 360 스캔 코드 재사용 가능)
-
-                # 1) 현 위치에서 주변을 스캔해서 episode_images에 쌓아
                 for _ in range(11):
                     if habitat_env.episode_over: break
-                    obs = habitat_env.step(3)  # 좌로 도는 등 30도씩 회전
+                    obs = habitat_env.step(3)
                     episode_images.append(obs['rgb'])
                     episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                     step_counter += 1
 
-                # 2) 최근 12장의 뷰로 make_plan 호출            
                 (
                     verify_goal_image,
                     verify_goal_mask,
@@ -194,7 +179,6 @@ for i in tqdm(range(args.eval_episodes)):
                     verify_obj_detected
                 ) = nav_planner.make_plan(episode_images[-12:])
 
-                # 3) make_plan이 알려준 best 방향으로 정면 맞추기 (네가 이미 아래서 하던 거 복붙)
                 for j in range(min(11 - verify_rotate, 1 + verify_rotate)):
                     if habitat_env.episode_over: break
                     if verify_rotate <= 6:
@@ -208,53 +192,40 @@ for i in tqdm(range(args.eval_episodes)):
                 episode_images.append(verify_vis)
                 episode_images.append(verify_vis)
 
-                # 4) 최종 판정
                 if verify_obj_detected:
-                    # 이제 진짜 목표물 눈앞에 있는 걸로 확정
                     goal_flag = True
-                    # 성공 처리: 에피소드 끝내고 싶으면 continue
                     pending_verify = False
                     continue
 
                 elif verify_pri_flag:
-                    # 아직도 확신 못 했음 -> 계속 탐색
-                    # 이 시점의 goal을 업데이트하고 계속 가자
                     pending_verify = True
                     goal_flag = False
                     prev_boxes = getattr(nav_planner, "_last_bboxes", [])
                 else:
-                    # 완전 실패: 목표물 못 찾음 → 다시 플래너 호출
                     pending_verify = False
                     goal_flag = False
                     prev_boxes = getattr(nav_planner, "_last_bboxes", [])
 
-                # 새 goal로 정책 리셋
                 nav_executor.reset(verify_goal_image, verify_goal_mask)
-
-                # 그리고 바로 다음 while 루프 반복으로 넘어감
                 continue
             
             prev_boxes = getattr(nav_planner, "_last_bboxes", []) if prev_boxes is None else prev_boxes
 
-            # --- (NEW) 동일 스캔: -90, -60, -30, 0, +30, +60, +90 ---
             pano7 = []
             angles7 = []
 
-            # 1) 먼저 왼쪽으로 3번 돌아 -90° 도달
             for _ in range(3):
                 if habitat_env.episode_over: break
-                obs = habitat_env.step(3)  # 좌회전(-30°)
+                obs = habitat_env.step(3)
                 episode_images.append(obs['rgb'])
                 episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                 step_counter += 1
 
-            # -90° 프레임 기록
             pano7.append(episode_images[-1]); angles7.append(-90)
 
-            # 2) -90에서 시작해 우측으로 6스텝 스윕해 +90°까지 수집
             for k in range(6):
                 if habitat_env.episode_over: break
-                obs = habitat_env.step(2)  # 우회전(+30°)
+                obs = habitat_env.step(2)
                 episode_images.append(obs['rgb'])
                 episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                 step_counter += 1
@@ -264,7 +235,6 @@ for i in tqdm(range(args.eval_episodes)):
             if habitat_env.episode_over or len(pano7) == 0:
                 break
 
-            # priors 기반 방향 선택(7장)
             (
                 direction_image,   # goal_rgb
                 debug_mask,
@@ -282,7 +252,6 @@ for i in tqdm(range(args.eval_episodes)):
                 ignore_classes=['floor','ground','flooring'],
                 return_detail=False
             ):
-                # 정책이 앞으로 가지 못한다고 판단 → 다시 VLM 호출
                 for _ in range(11):
                     if habitat_env.episode_over: break
                     obs = habitat_env.step(3)
@@ -312,13 +281,11 @@ for i in tqdm(range(args.eval_episodes)):
 
                 episode_images.append(vis_rgb2); episode_images.append(vis_rgb2)
 
-                # make_plan 내부에서 apply_priors_on_image가 다시 호출되어 _last_bboxes 갱신됨
                 prev_boxes = getattr(nav_planner, "_last_bboxes", [])
                 pending_verify = (pri_flag and (not obj_detected))
                 goal_flag = obj_detected
 
             else:
-                # === 스캔 종료 헤딩(+90)에서 선택 각도로 회전 ===
                 cur_deg = int(angles7[-1])           # +90
                 sel_deg = int(angles7[best_idx])     # {-90,-60,-30,0,30,60,90}
                 delta = sel_deg - cur_deg
@@ -326,21 +293,20 @@ for i in tqdm(range(args.eval_episodes)):
                 if delta < 0:
                     for _ in range(turns):
                         if habitat_env.episode_over: break
-                        obs = habitat_env.step(3)  # 좌회전
+                        obs = habitat_env.step(3)
                         episode_images.append(obs['rgb'])
                         episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                         step_counter += 1
                 elif delta > 0:
                     for _ in range(turns):
                         if habitat_env.episode_over: break
-                        obs = habitat_env.step(2)  # 우회전
+                        obs = habitat_env.step(2)
                         episode_images.append(obs['rgb'])
                         episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                         step_counter += 1
 
                 episode_images.append(debug_vis); episode_images.append(debug_vis)
                 goal_image, goal_mask = direction_image, debug_mask
-                # 아직 최종 확신 아님: 도착 후 verify 단계에서 확정
                 pending_verify = pri_flag and (not obj_detected)
                 goal_flag = obj_detected
                 prev_boxes = curr_boxes
@@ -351,21 +317,16 @@ for i in tqdm(range(args.eval_episodes)):
             step_counter = 0
             nav_executor.reset(goal_image, goal_mask)
 
-    # === NEW: 래핑 원복(중첩 방지) ===
     habitat_env.step = _orig_step
 
-    # ====== ⏱️ 에피소드 '계산' 시간 측정 종료 ======
     episode_t1 = time.perf_counter()
     episode_time_sec = episode_t1 - episode_t0
 
 
-    # --- 서로 길이 다르게, 각각 독립적으로 쓰기 ---
     for img in episode_images:
-        # 필요시: img = img.astype(np.uint8)
         fps_writer.append_data(img)
 
     for top in episode_topdowns:
-        # 필요시: top = top.astype(np.uint8)
         topdown_writer.append_data(top)
 
     fps_writer.close()
@@ -380,11 +341,9 @@ for i in tqdm(range(args.eval_episodes)):
         'final_distance_to_goal': habitat_env.get_metrics()['distance_to_goal'],
         'llm_calls': int(nav_planner.llm_call_count),
         'llm_avg_time_sec': float(np.mean(nav_planner.llm_durations)) if len(nav_planner.llm_durations) > 0 else 0.0,
-        'episode_time_sec': float(episode_time_sec),  # ✅ 에피소드 총 계산 시간(초)
-
-        # === NEW: 추가 지표 ===
-        'num_steps': int(habitat_env.get_metrics().get('num_steps', 0)),  # Habitat 빌트인 스텝 수
-        'total_distance_m': float(_stats['dist_m']),                      # 유클리드 총 이동거리(m)
+        'episode_time_sec': float(episode_time_sec),
+        'num_steps': int(habitat_env.get_metrics().get('num_steps', 0)),
+        'total_distance_m': float(_stats['dist_m']),
     })
 
     write_metrics(evaluation_metrics)
