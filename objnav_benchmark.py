@@ -33,16 +33,71 @@ def adjust_topdown(metrics):
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--eval_episodes", type=int, default=200)
+    parser.add_argument(
+        "--episode_path",
+        type=str,
+        help="Path to a custom ObjectNav episode file (.json or .json.gz)",
+    )
+    parser.add_argument(
+        "--scene_dataset",
+        type=str,
+        default=None,
+        help="Optional scene dataset config to use with a custom episode file",
+    )
     return parser.parse_known_args()[0]
 
 
 args = get_args()
 habitat_config = hm3d_config(stage='val', episodes=args.eval_episodes)
+OmegaConf.set_readonly(habitat_config, False)
+
+#
+# Allow overriding with a custom episode JSON/JSON.GZ (e.g., isa_00646_bed.json.gz).
+#
+if args.episode_path:
+    episode_path = os.path.abspath(os.path.expanduser(args.episode_path))
+    habitat_config.habitat.dataset.data_path = episode_path
+    habitat_config.habitat.dataset.split = "custom"
+    habitat_config.habitat.dataset.scenes_dir = ""
+    habitat_config.habitat.environment.iterator_options.num_episode_sample = args.eval_episodes
+    habitat_config.habitat.simulator.scene_dataset = args.scene_dataset or ""
+    habitat_config.habitat.simulator.scene = ""
+
 print("scene_dataset =", habitat_config.habitat.simulator.scene_dataset)
 print("scenes_dir    =", habitat_config.habitat.dataset.scenes_dir)
 print("data_path     =", habitat_config.habitat.dataset.data_path)
 
-OmegaConf.set_readonly(habitat_config, False)
+# ===== AABB 관련 measure 전부 끄기 =====
+with open_dict(habitat_config.habitat.task):
+    meas_cfg = habitat_config.habitat.task.measurements
+
+    # 1) 이름에 'aabb'가 들어간 측정은 전부 제거
+    for k in list(meas_cfg.keys()):
+        if "aabb" in k.lower():
+            print(f"[Config] Disable AABB-related measurement: {k}")
+            meas_cfg.pop(k)
+
+    # 2) top_down_map 안에서 goal AABB를 그리는 옵션도 꺼주기 (버전별 방어 코딩)
+    if "top_down_map" in meas_cfg:
+        td_cfg = meas_cfg.top_down_map
+        if "DRAW_GOAL_AABBS" in td_cfg:
+            td_cfg.DRAW_GOAL_AABBS = False
+        if "draw_goal_aabbs" in td_cfg:
+            td_cfg.draw_goal_aabbs = False
+
+    # 3) 성공 반경(geodesic distance threshold)을 0.5m로 강제
+    if "success" in meas_cfg:
+        suc_cfg = meas_cfg.success
+        if "success_distance" in suc_cfg:
+            suc_cfg.success_distance = 0.5
+        if "SUCCESS_DISTANCE" in suc_cfg:
+            suc_cfg.SUCCESS_DISTANCE = 0.5
+
+    it = habitat_config.habitat.environment.iterator_options
+    it.shuffle = False      # 무작위 섞지 말고
+    it.cycle = False        # 마지막 에피소드 이후 다시 처음으로 돌지 말고
+    it.group_by_scene = False   # 한 scene 뿐이라 상관 없지만 명시
+    it.num_episode_sample = -1  # 데이터셋에 있는 에피소드 전부 사용
 
 from habitat.config.default_structured_configs import NumStepsMeasurementConfig
 with open_dict(habitat_config.habitat.task.measurements):
