@@ -14,11 +14,18 @@ from tqdm import tqdm
 from constants import *
 from config_utils import hm3d_config
 from gpt4v_planner import GPT4V_Planner
-from policy_agent import Policy_Agent
+from habitat.tasks.utils import cartesian_to_polar
+from habitat.utils.geometry_utils import quaternion_rotate_vector
 from habitat.utils.visualizations.maps import colorize_draw_agent_and_fit_to_height
 from cv_utils.yoloe_tools import initialize_yoloe_model
 from omegaconf import OmegaConf, open_dict
 
+try:
+    from habitat_baselines.agents.ppo_agents import PPOAgent, get_default_config
+except ImportError:
+    import sys
+    sys.path.append(os.path.join(HABITAT_ROOT_DIR, "habitat-baselines"))
+    from habitat_baselines.agents.ppo_agents import PPOAgent, get_default_config
 
 def write_metrics(metrics, path="objnav_hm3d.csv"):
     with open(path, mode="w", newline="") as csv_file:
@@ -30,6 +37,58 @@ def write_metrics(metrics, path="objnav_hm3d.csv"):
 def adjust_topdown(metrics):
     return cv2.cvtColor(colorize_draw_agent_and_fit_to_height(metrics['top_down_map'], 1024), cv2.COLOR_BGR2RGB)
 
+def compute_pointgoal(agent_state, goal_position):
+    direction_vector = np.array(goal_position, dtype=np.float32) - np.array(agent_state.position, dtype=np.float32)
+    direction_vector_agent = quaternion_rotate_vector(agent_state.rotation.inverse(), direction_vector)
+    rho, phi = cartesian_to_polar(-direction_vector_agent[2], direction_vector_agent[0])
+    return np.array([rho, -phi], dtype=np.float32)
+
+def forward_waypoint(sim, distance_m=3.0):
+    agent_state = sim.get_agent_state()
+    forward_world = quaternion_rotate_vector(agent_state.rotation, np.array([0.0, 0.0, -1.0], dtype=np.float32))
+    return np.array(agent_state.position, dtype=np.float32) + forward_world * float(distance_m)
+
+class PointNavPPOAgent:
+    def __init__(self, sim, model_path, depth_max, resolution=256, input_type="rgbd", gpu_id=0):
+        self.sim = sim
+        self.goal_position = None
+        cfg = get_default_config()
+        cfg.INPUT_TYPE = input_type
+        cfg.MODEL_PATH = model_path
+        cfg.RESOLUTION = resolution
+        cfg.PTH_GPU_ID = gpu_id
+        self.agent = PPOAgent(cfg)
+        self.resolution = resolution
+        self.depth_max = float(depth_max) if depth_max else 1.0
+
+    def reset(self, goal_position):
+        self.goal_position = np.array(goal_position, dtype=np.float32)
+        self.agent.reset()
+
+    def _build_obs(self, obs, pointgoal):
+        rgb = cv2.resize(obs["rgb"], (self.resolution, self.resolution), interpolation=cv2.INTER_AREA)
+        depth = obs["depth"]
+        if depth.ndim == 3 and depth.shape[2] == 1:
+            depth = depth[:, :, 0]
+        depth = cv2.resize(depth, (self.resolution, self.resolution), interpolation=cv2.INTER_NEAREST)
+        depth = np.nan_to_num(depth, nan=0.0, posinf=self.depth_max, neginf=0.0)
+        depth = np.clip(depth / self.depth_max, 0.0, 1.0).astype(np.float32)
+        depth = depth[:, :, np.newaxis]
+        return {
+            "rgb": rgb.astype(np.uint8),
+            "depth": depth,
+            "pointgoal_with_gps_compass": pointgoal,
+        }
+
+    def step(self, obs):
+        if self.goal_position is None:
+            return 0, None
+        agent_state = self.sim.get_agent_state()
+        pointgoal = compute_pointgoal(agent_state, self.goal_position)
+        ppo_obs = self._build_obs(obs, pointgoal)
+        action = self.agent.act(ppo_obs)["action"]
+        return action, None
+
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--eval_episodes", type=int, default=200)
@@ -38,6 +97,7 @@ def get_args():
 
 args = get_args()
 VLM_PERIOD = 4  # VLM 플래너 호출 주기 (웨이포인트 수 기준)
+WAYPOINT_DISTANCE_M = 3.0
 habitat_config = hm3d_config(stage='val', episodes=args.eval_episodes)
 print("scene_dataset =", habitat_config.habitat.simulator.scene_dataset)
 print("scenes_dir    =", habitat_config.habitat.dataset.scenes_dir)
@@ -68,7 +128,14 @@ except TypeError:
     # fallback: 옛 시그니처 호환
     nav_planner = GPT4V_Planner(yoloe_model, yoloe_model)
 
-nav_executor = Policy_Agent(model_path=POLICY_CHECKPOINT)
+PPO_CHECKPOINT = os.path.join("checkpoints", "mp3d-rgbd-best.pth")
+depth_max = float(habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.max_depth)
+nav_executor = PointNavPPOAgent(
+    habitat_env.sim,
+    model_path=PPO_CHECKPOINT,
+    depth_max=depth_max,
+    input_type="rgbd",
+)
 evaluation_metrics = []
 
 for i in tqdm(range(args.eval_episodes)):
@@ -93,7 +160,6 @@ for i in tqdm(range(args.eval_episodes)):
     os.makedirs(dir, exist_ok=False)
     fps_writer = imageio.get_writer("%s/fps.mp4" % dir, fps=4)
     topdown_writer = imageio.get_writer("%s/metric.mp4" % dir, fps=4)
-    heading_offset = 0
     # step counters to rate-limit expensive resets
     step_counter = 0
     waypoint_count = 0
@@ -136,17 +202,14 @@ for i in tqdm(range(args.eval_episodes)):
         step_counter += 1
     episode_images.append(vis_rgb)
     episode_images.append(vis_rgb)
-    nav_executor.reset(goal_image, goal_mask)
+    waypoint_world = forward_waypoint(habitat_env.sim, WAYPOINT_DISTANCE_M)
+    nav_executor.reset(waypoint_world)
 
 
     while not habitat_env.episode_over:
-        action, skill_image = nav_executor.step(obs['rgb'], habitat_env.sim.previous_step_collided)
+        action, _ = nav_executor.step(obs)
 
         if action != 0 or goal_flag:
-            if action == 4:
-                heading_offset += 1
-            elif action == 5:
-                heading_offset -= 1
             obs = habitat_env.step(action)
             episode_images.append(obs['rgb'])
             episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
@@ -155,22 +218,6 @@ for i in tqdm(range(args.eval_episodes)):
         else:
             if habitat_env.episode_over:
                 break
-            # heading 조정
-            for _ in range(0, abs(heading_offset)):
-                if habitat_env.episode_over:
-                    break
-                if heading_offset > 0:
-                    obs = habitat_env.step(5)
-                    episode_images.append(obs['rgb'])
-                    episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
-                    heading_offset -= 1
-                    step_counter += 1
-                elif heading_offset < 0:
-                    obs = habitat_env.step(4)
-                    episode_images.append(obs['rgb'])
-                    episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
-                    heading_offset += 1
-                    step_counter += 1
 
             # # ===== 최종 확인 로직 (웨이포인트 도착 & 그 지점이 의심타겟이었을 때) =====
             # if pending_verify and action == 0:
@@ -180,7 +227,7 @@ for i in tqdm(range(args.eval_episodes)):
             #     # 1) 현 위치에서 주변을 스캔해서 episode_images에 쌓아
             #     for _ in range(11):
             #         if habitat_env.episode_over: break
-            #         obs = habitat_env.step(3)  # 좌로 도는 등 30도씩 회전
+            #         obs = habitat_env.step(3)  # 우로 도는 등 30도씩 회전
             #         episode_images.append(obs['rgb'])
             #         episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
             #         step_counter += 1
@@ -286,23 +333,20 @@ for i in tqdm(range(args.eval_episodes)):
                 pano7 = []
                 angles7 = []
 
-                # 1) 먼저 왼쪽으로 3번 돌아 -90° 도달
                 for _ in range(3):
                     if habitat_env.episode_over:
                         break
-                    obs = habitat_env.step(3)  # 좌회전(-30°)
+                    obs = habitat_env.step(3)  
                     episode_images.append(obs['rgb'])
                     episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                     step_counter += 1
 
-                # -90° 프레임 기록
                 pano7.append(episode_images[-1]); angles7.append(-90)
 
-                # 2) -90에서 시작해 우측으로 6스텝 스윕해 +90°까지 수집
                 for k in range(6):
                     if habitat_env.episode_over:
                         break
-                    obs = habitat_env.step(2)  # 우회전(+30°)
+                    obs = habitat_env.step(2) 
                     episode_images.append(obs['rgb'])
                     episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                     step_counter += 1
@@ -330,7 +374,7 @@ for i in tqdm(range(args.eval_episodes)):
                 if delta < 0:
                     for _ in range(turns):
                         if habitat_env.episode_over: break
-                        obs = habitat_env.step(3)  # 좌회전
+                        obs = habitat_env.step(3)  # 우회전
                         episode_images.append(obs['rgb'])
                         episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                         step_counter += 1
@@ -352,7 +396,8 @@ for i in tqdm(range(args.eval_episodes)):
             print("goal_flag", goal_flag)
             print("step_counter", step_counter)
             step_counter = 0
-            nav_executor.reset(goal_image, goal_mask)
+            waypoint_world = forward_waypoint(habitat_env.sim, WAYPOINT_DISTANCE_M)
+            nav_executor.reset(waypoint_world)
 
     # === NEW: 래핑 원복(중첩 방지) ===
     habitat_env.step = _orig_step
