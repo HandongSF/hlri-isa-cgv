@@ -19,8 +19,12 @@ class GPT4V_Planner:
         self.detect_objects = ['bed','sofa','chair','houseplant','tv monitor','toilet']
         # ---- LLM/플래너/모듈별 시간 계측 저장소 ----
         self.llm_call_count = 0
+        self.llm_success_count = 0      # 응답 문자열을 받은 호출 수
+        self.llm_error_count = 0        # 예외로 실패한 호출 수
+        self.llm_last_error = ""        # 마지막 예외 메시지
         self.llm_durations = []          # 각 LLM 호출 소요시간(초)
         self.planner_durations = []      # 각 make_plan 호출 전체 소요시간(초)
+        self.yoloe_durations = []        # 각 YOLOE object detection 호출 소요시간(초)
         # ---- Priors 저장소 ----
         self.priors_log = []       # 에피소드 동안 쌓인 priors 히스토리 (리스트)
         self.latest_priors = None  # 가장 최근 priors 스냅샷 (딕셔너리)
@@ -55,6 +59,15 @@ class GPT4V_Planner:
             with open(os.path.join(self._logdir, f"raw_{idx:04d}.txt"), "w", encoding="utf-8") as f:
                 f.write(snapshot["raw"])
 
+    def _record_llm_exception(self, stage: str, try_idx: int, exc: Exception):
+        self.llm_error_count += 1
+        self.llm_last_error = "{}[try={}] {}: {}".format(
+            stage, try_idx + 1, type(exc).__name__, str(exc)
+        )
+        print("[LLM/{}] ERROR try {}/10: {}".format(
+            stage, try_idx + 1, self.llm_last_error
+        ))
+
     def export_priors_log(self, path: str):  # NEW
         """에피소드 종료 시 전체 priors_log를 한 번에 저장하고 싶다면 호출."""
         with open(path, "w", encoding="utf-8") as f:
@@ -77,8 +90,12 @@ class GPT4V_Planner:
 
         # ---- 에피소드 시작 시 계측 초기화 ----
         self.llm_call_count = 0
+        self.llm_success_count = 0
+        self.llm_error_count = 0
+        self.llm_last_error = ""
         self.llm_durations = []
         self.planner_durations = []
+        self.yoloe_durations = []
         self.priors_log = []
         self.latest_priors = None
 
@@ -222,15 +239,21 @@ class GPT4V_Planner:
         priors = None
 
         for try_idx in range(10):
+            print("[LLM/PRIORS] try {}/10".format(try_idx + 1))
             t0 = time.perf_counter()
             try:
                 # 이미지 없이 텍스트 전용 호출
                 raw_answer = gpt_response(text_content + PRIOR_CLASS_LIST, system_prompt=PRIORS_PROMPT)
-            except Exception:
+                if raw_answer:
+                    self.llm_success_count += 1
+            except Exception as e:
                 raw_answer = None
+                self._record_llm_exception("PRIORS", try_idx, e)
             finally:
                 self.llm_call_count += 1
-                self.llm_durations.append(time.perf_counter() - t0)
+                dt = time.perf_counter() - t0
+                self.llm_durations.append(dt)
+                print("[LLM/PRIORS] elapsed={:.3f}s has_response={}".format(dt, bool(raw_answer)))
 
             if not raw_answer:
                 continue
@@ -242,6 +265,8 @@ class GPT4V_Planner:
             except Exception:
                 parsed = None
             if not parsed:
+                print("[LLM/PRIORS] raw response:\n{}".format(raw_answer))
+                print("[LLM/PRIORS] parse failed, retrying.")
                 continue
 
             # 표준 PRIORS 딕셔너리만 추출
@@ -318,15 +343,21 @@ class GPT4V_Planner:
         valid_angles = set(int(x) for x in angles.tolist())
 
         for try_idx in range(10):
+            print("[LLM/VLM] try {}/10".format(try_idx + 1))
             t0 = time.perf_counter()
             try:
                 # ⚠️ GPT4V_PROMPT는 시스템프롬프트로 들어간다고 가정
                 raw_answer = gptv_response(text_content, inference_image, GPT4V_PROMPT)
-            except Exception:
+                if raw_answer:
+                    self.llm_success_count += 1
+            except Exception as e:
                 raw_answer = None
+                self._record_llm_exception("VLM", try_idx, e)
             finally:
                 self.llm_call_count += 1
-                self.llm_durations.append(time.perf_counter() - t0)
+                dt = time.perf_counter() - t0
+                self.llm_durations.append(dt)
+                print("[LLM/VLM] elapsed={:.3f}s has_response={}".format(dt, bool(raw_answer)))
 
             if not raw_answer:
                 continue
@@ -334,6 +365,8 @@ class GPT4V_Planner:
             # Reason/Angle/Flag만 파싱
             parsed = parse_decision_json(raw_answer, valid_angles=list(valid_angles))
             if not parsed:
+                print("[LLM/VLM] raw response:\n{}".format(raw_answer))
+                print("[LLM/VLM] decision parse failed, retrying.")
                 continue
 
             # Angle 검증
@@ -362,6 +395,7 @@ class GPT4V_Planner:
             # 파일로 남기고 싶으면 주석 해제
             # self._dump_llm_call(snapshot)
 
+            print("[LLM] raw response:\n{}".format(raw_answer))
             print("[LLM] angle:", a, "| flag:", flag)
             if reason:
                 print("[LLM] reason:", reason)
@@ -430,6 +464,7 @@ class GPT4V_Planner:
             H, W = rgb.shape[:2]
             debug_mask = np.zeros((H, W), dtype=np.uint8)
 
+            _det_t0 = time.perf_counter()
             det = yoloe_detection(
                 image=rgb,
                 target_classes=prompt_classes,
@@ -440,6 +475,7 @@ class GPT4V_Planner:
                 use_text_prompt=False,
                 retina_masks=False,   # 박스만
             )
+            self.yoloe_durations.append(time.perf_counter() - _det_t0)
 
             # 안전 추출 + numpy 표준화 헬퍼
             def _first_not_none(obj, names):

@@ -32,7 +32,7 @@ def adjust_topdown(metrics):
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--eval_episodes", type=int, default=1000)
+    parser.add_argument("--eval_episodes", type=int, default=400)
     return parser.parse_known_args()[0]
 
 
@@ -95,6 +95,8 @@ for i in tqdm(range(args.eval_episodes)):
     curr_boxes = None
     pending_verify = False  
     goal_flag = False
+    deadlock_llm_calls = 0
+    verification_llm_calls = 0
 
     nav_planner.reset(habitat_env.current_episode.object_category)
     episode_images = [obs['rgb']]
@@ -169,6 +171,7 @@ for i in tqdm(range(args.eval_episodes)):
                     episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                     step_counter += 1
 
+                _llm_calls_before = int(nav_planner.llm_call_count)
                 (
                     verify_goal_image,
                     verify_goal_mask,
@@ -178,6 +181,7 @@ for i in tqdm(range(args.eval_episodes)):
                     verify_pri_flag,
                     verify_obj_detected
                 ) = nav_planner.make_plan(episode_images[-12:])
+                verification_llm_calls += int(nav_planner.llm_call_count) - _llm_calls_before
 
                 for j in range(min(11 - verify_rotate, 1 + verify_rotate)):
                     if habitat_env.episode_over: break
@@ -259,6 +263,7 @@ for i in tqdm(range(args.eval_episodes)):
                     episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                     step_counter += 1
 
+                _llm_calls_before = int(nav_planner.llm_call_count)
                 (
                     goal_image,
                     goal_mask,
@@ -268,6 +273,7 @@ for i in tqdm(range(args.eval_episodes)):
                     pri_flag,
                     obj_detected
                 ) = nav_planner.make_plan(episode_images[-12:])
+                deadlock_llm_calls += int(nav_planner.llm_call_count) - _llm_calls_before
 
                 for j in range(min(11 - goal_rotate, 1 + goal_rotate)):
                     if habitat_env.episode_over: break
@@ -340,7 +346,15 @@ for i in tqdm(range(args.eval_episodes)):
         'start_distance_to_goal': start_geodesic_m, 
         'final_distance_to_goal': habitat_env.get_metrics()['distance_to_goal'],
         'llm_calls': int(nav_planner.llm_call_count),
+        'llm_calls_deadlock': int(deadlock_llm_calls),
+        'llm_calls_verification': int(verification_llm_calls),
+        'llm_success_calls': int(nav_planner.llm_success_count),
+        'llm_error_calls': int(nav_planner.llm_error_count),
         'llm_avg_time_sec': float(np.mean(nav_planner.llm_durations)) if len(nav_planner.llm_durations) > 0 else 0.0,
+        'llm_last_error': str(nav_planner.llm_last_error) if nav_planner.llm_last_error else "",
+        'yoloe_detect_calls': int(len(nav_planner.yoloe_durations)),
+        'yoloe_detect_avg_time_sec': float(np.mean(nav_planner.yoloe_durations)) if len(nav_planner.yoloe_durations) > 0 else 0.0,
+        'yoloe_detect_total_time_sec': float(np.sum(nav_planner.yoloe_durations)) if len(nav_planner.yoloe_durations) > 0 else 0.0,
         'episode_time_sec': float(episode_time_sec),
         'num_steps': int(habitat_env.get_metrics().get('num_steps', 0)),
         'total_distance_m': float(_stats['dist_m']),

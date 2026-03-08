@@ -7,7 +7,9 @@ from typing import Any, Dict, Iterable, List, Optional
 # 정규식
 _SPLIT_RE   = re.compile(r"[,\;/]+")
 _WS_RE      = re.compile(r"\s+")
-_BRACED_RE  = re.compile(r"\{.*\}", flags=re.DOTALL)
+_BRACED_RE  = re.compile(r"\{[\s\S]*?\}")
+_KEY_OPEN_RE_TEMPLATE = r'["\']?{key}["\']?\s*:\s*\['
+_QUOTED_ITEM_RE = re.compile(r'"([^"\\]*(?:\\.[^"\\]*)*)"|\'([^\'\\]*(?:\\.[^\'\\]*)*)\'')
 
 # 형식 규칙(개수 제한 없음; 형식만 체크)
 MAX_ITEM_WORDS   = 3
@@ -29,15 +31,66 @@ def _dedup(seq: Iterable[str]) -> List[str]:
     """순서를 유지하는 중복 제거."""
     return list(dict.fromkeys(seq))
 
+def _iter_balanced_braced(text: str) -> List[str]:
+    """
+    문자열 내 balanced { ... } 블록 후보를 모두 추출한다.
+    문자열 리터럴 내부의 중괄호는 무시한다.
+    """
+    if not text:
+        return []
+    out: List[str] = []
+    depth = 0
+    start = -1
+    in_string = False
+    quote_ch = ""
+    escaped = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\":
+                escaped = True
+                continue
+            if ch == quote_ch:
+                in_string = False
+            continue
+
+        if ch in ("'", '"'):
+            in_string = True
+            quote_ch = ch
+            continue
+
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+            continue
+
+        if ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                out.append(text[start:i+1])
+                start = -1
+    return out
+
 def _find_braced(text: str) -> Optional[str]:
-    """원시 텍스트에서 가장 그럴싸한 {..} 블록 하나를 추출."""
+    """원시 텍스트에서 dict로 파싱 가능한 {..} 블록 하나를 추출."""
     if not text:
         return None
-    cand = _BRACED_RE.findall(text)
-    if not cand:
-        return None
-    cand.sort(key=len, reverse=True)  # 가장 긴 것을 우선
-    return cand[0]
+
+    # 1) balanced 블록 우선 (가장 긴 후보부터)
+    cands = _iter_balanced_braced(text)
+    cands.sort(key=len, reverse=True)
+    for cand in cands:
+        if isinstance(_to_dict(cand), dict):
+            return cand
+
+    # 2) 비정형 텍스트 대비 정규식 폴백
+    for cand in _BRACED_RE.findall(text):
+        if isinstance(_to_dict(cand), dict):
+            return cand
+    return None
 
 def _to_dict(s: str) -> Optional[dict]:
     """JSON → 실패 시 Python literal(dict) 파싱."""
@@ -88,6 +141,52 @@ def _filter_item_len(items: List[str], violations: List[str], field_name: str) -
         out.append(it)
     return out
 
+def _extract_keyed_lists_relaxed(raw_text: str) -> Optional[Dict[str, Any]]:
+    """
+    JSON이 잘렸거나 일부 깨진 경우에도 키별 리스트를 느슨하게 복구한다.
+    예) {"Supports":[...], "StrongCooccurs":["a","b","c
+    """
+    if not raw_text:
+        return None
+
+    keys = ["Supports", "StrongCooccurs", "Gateways", "Lookalikes"]
+    spans = []
+    for key in keys:
+        m = re.search(_KEY_OPEN_RE_TEMPLATE.format(key=re.escape(key)), raw_text, flags=re.IGNORECASE)
+        if m:
+            spans.append((m.start(), m.end(), key))
+    if not spans:
+        return None
+
+    spans.sort(key=lambda x: x[0])
+    lists: Dict[str, List[str]] = {k: [] for k in keys}
+    violations: List[str] = ["relaxed_parse_used"]
+
+    for i, (_, seg_start, key) in enumerate(spans):
+        next_start = spans[i + 1][0] if i + 1 < len(spans) else len(raw_text)
+        seg = raw_text[seg_start:next_start]
+
+        items: List[str] = []
+        for q1, q2 in _QUOTED_ITEM_RE.findall(seg):
+            tok = q1 or q2
+            tok = tok.strip()
+            if tok:
+                items.append(tok)
+
+        norm = _lower_list(items)
+        norm = _dedup(_filter_item_len(norm, violations, key.lower()))
+        lists[key] = norm
+
+    lists["Gateways"] = _ensure_gateways_required(lists["Gateways"])
+    return {
+        "Supports": lists["Supports"],
+        "StrongCooccurs": lists["StrongCooccurs"],
+        "Gateways": lists["Gateways"],
+        "Lookalikes": lists["Lookalikes"],
+        "violations": violations,
+        "raw_blob": raw_text,
+    }
+
 def _ensure_gateways_required(gws: List[str]) -> List[str]:
     """gateways에 gateway가 항상 포함되도록 보강(중복 제거, 개수 제한 없음)."""
     s = set(gws)
@@ -104,13 +203,16 @@ def parse_priors_json(raw_text: str) -> Optional[Dict[str, Any]]:
       - raw_blob: str          # 추출된 원시 블록(디버깅용)
     Angle/Flag/Reason 등은 전혀 다루지 않는다.
     """
-    blob = _find_braced(raw_text)
-    if not blob:
-        return None
-
-    d = _to_dict(blob)
+    raw_text = (raw_text or "").strip()
+    d = _to_dict(raw_text)
+    blob = raw_text if isinstance(d, dict) else None
     if not isinstance(d, dict):
-        return None
+        blob = _find_braced(raw_text)
+        if not blob:
+            return _extract_keyed_lists_relaxed(raw_text)
+        d = _to_dict(blob)
+    if not isinstance(d, dict):
+        return _extract_keyed_lists_relaxed(raw_text)
 
     # {"Answer": {...}} 형태 처리
     if "Answer" in d and isinstance(d["Answer"], dict):
@@ -204,6 +306,68 @@ def _trim_reason(reason: str) -> str:
         return " ".join(words)
     return " ".join(words[:DECISION_MAX_REASON_WORDS]) + " …"
 
+
+def _extract_decision_relaxed(raw_text: str, valid_angles: Optional[Iterable[int]] = None) -> Optional[Dict[str, Any]]:
+    """
+    잘린/깨진 JSON에서도 Reason/Angle/Flag를 느슨하게 복구한다.
+    최소 Angle만 복구되면 성공으로 간주한다.
+    """
+    text = raw_text or ""
+    violations: List[str] = ["relaxed_parse_used"]
+
+    angle = None
+    m = re.search(r'["\']?(?:Angle|angle)["\']?\s*:\s*(-?\d+)', text, flags=re.IGNORECASE)
+    if m:
+        angle = _norm_angle(m.group(1), valid_angles)
+    if angle is None:
+        m = re.search(r"\bangle\b[^0-9\-]*(-?\d+)", text, flags=re.IGNORECASE)
+        if m:
+            angle = _norm_angle(m.group(1), valid_angles)
+    if angle is None:
+        return None
+
+    flag = False
+    m = re.search(
+        r'["\']?(?:Flag|flag|Found|found|Goal|goal)["\']?\s*:\s*(true|false|yes|no|y|n|1|0)',
+        text,
+        flags=re.IGNORECASE,
+    )
+    if m:
+        flag = _to_bool(m.group(1))
+    else:
+        violations.append("flag_missing_default_false")
+
+    reason_raw = ""
+    reason_patterns = [
+        r'["\']?(?:Reason|reason|Rationale|rationale)["\']?\s*:\s*"([^"]*)"',
+        r'["\']?(?:Reason|reason|Rationale|rationale)["\']?\s*:\s*\'([^\']*)\'',
+        # closing quote 없는 잘림 대응
+        r'["\']?(?:Reason|reason|Rationale|rationale)["\']?\s*:\s*"([^"]*)',
+        r'["\']?(?:Reason|reason|Rationale|rationale)["\']?\s*:\s*\'([^\']*)',
+        # 따옴표 없는 텍스트 대응
+        r'["\']?(?:Reason|reason|Rationale|rationale)["\']?\s*:\s*([^,\}\n]+)',
+    ]
+    for pat in reason_patterns:
+        m = re.search(pat, text, flags=re.IGNORECASE)
+        if m:
+            reason_raw = (m.group(1) or "").strip()
+            if reason_raw:
+                break
+    if not reason_raw:
+        violations.append("reason_missing")
+
+    reason = _trim_reason(str(reason_raw))
+    if _word_count(str(reason_raw)) > DECISION_MAX_REASON_WORDS:
+        violations.append(f"reason_trimmed_to_{DECISION_MAX_REASON_WORDS}_words")
+
+    return {
+        "Angle": int(angle),
+        "Flag": flag,
+        "Reason": reason,
+        "violations": violations,
+        "raw_blob": raw_text,
+    }
+
 def parse_decision_json(raw_text: str, valid_angles: Optional[Iterable[int]] = None) -> Optional[Dict[str, Any]]:
     """
     LLM 원문에서 Reason/Angle/Flag만 복구한다.
@@ -217,13 +381,15 @@ def parse_decision_json(raw_text: str, valid_angles: Optional[Iterable[int]] = N
       }
     실패 시 None
     """
-    blob = _find_braced(raw_text)
-    if not blob:
-        return None
-
-    d = _to_dict(blob)
+    raw_text = (raw_text or "").strip()
+    d = _to_dict(raw_text)
+    blob = raw_text if isinstance(d, dict) else None
     if not isinstance(d, dict):
-        return None
+        blob = _find_braced(raw_text)
+        if blob:
+            d = _to_dict(blob)
+    if not isinstance(d, dict):
+        return _extract_decision_relaxed(raw_text, valid_angles=valid_angles)
 
     # {"Answer": {...}} 형태 처리
     if "Answer" in d and isinstance(d["Answer"], dict):
@@ -235,7 +401,7 @@ def parse_decision_json(raw_text: str, valid_angles: Optional[Iterable[int]] = N
     angle_raw = _pick_first(d, ["Angle", "angle"])
     angle = _norm_angle(angle_raw, valid_angles)
     if angle is None:
-        return None
+        return _extract_decision_relaxed(raw_text, valid_angles=valid_angles)
 
     # --- Flag ---
     flag_raw = _pick_first(d, ["Flag", "flag", "Found", "found", "Goal", "goal"], False)
