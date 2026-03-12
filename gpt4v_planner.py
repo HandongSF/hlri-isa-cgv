@@ -414,7 +414,7 @@ class GPT4V_Planner:
         self,
         image_or_pano,                          # np.ndarray (RGB) or Sequence[np.ndarray]
         conf_threshold: float = 0.05,
-        MIN_TARGET_CONF: float = 0.35,
+        MIN_TARGET_CONF: float = 0.5,
         MIN_TARGET_AREA: float = 0.02,
         iou_threshold: float = 0.50,
         return_boxes: bool = False

@@ -190,11 +190,11 @@ def main():
     #print(f"LLM calls per meter (macro)  : {m['calls_per_meter_macro']:.4f} calls/m")
     #print(f"LLM calls per step  (micro)  : {m['calls_per_step_micro']:.4f} calls/step")
     #print(f"LLM calls per step  (macro)  : {m['calls_per_step_macro']:.4f} calls/step")
-    print(f"VLM calls per episode        : {m['llm_calls_per_episode']:.3f} calls/ep")
+    print(f"avg LLM/VLM calls per episode: {m['llm_calls_per_episode']:.3f} calls/ep")
     if m["has_llm_deadlock_col"]:
-        print(f"avg vlm_calls_deadlock per episode      : {m['llm_deadlock_calls_per_episode']:.3f} calls/ep")
+        print(f"avg VLM calls (deadlock) per episode    : {m['llm_deadlock_calls_per_episode']:.3f} calls/ep")
     if m["has_llm_verification_col"]:
-        print(f"avg vlm_calls_verification per episode  : {m['llm_verification_calls_per_episode']:.3f} calls/ep")
+        print(f"avg VLM calls (verification) per episode: {m['llm_verification_calls_per_episode']:.3f} calls/ep")
 
     print("\n-- 연산 시간 효율 --")
     print(f"sec per meter (micro)        : {m['sec_per_meter_micro']:.4f} s/m")
