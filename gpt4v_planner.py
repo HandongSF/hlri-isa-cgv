@@ -33,7 +33,7 @@ class GPT4V_Planner:
         self._prompt_classes = None
         self._floor_aliases = ['floor', 'ground', 'flooring']
 
-        # 📁 로깅 폴더 (끄기: None)
+        # 로깅 폴더 (끄기: None)
         self._logdir = None  # NEW
 
 
@@ -346,7 +346,7 @@ class GPT4V_Planner:
             print("[LLM/VLM] try {}/10".format(try_idx + 1))
             t0 = time.perf_counter()
             try:
-                # ⚠️ GPT4V_PROMPT는 시스템프롬프트로 들어간다고 가정
+                # GPT4V_PROMPT는 시스템 프롬프트로 들어간다고 가정
                 raw_answer = gptv_response(text_content, inference_image, GPT4V_PROMPT)
                 if raw_answer:
                     self.llm_success_count += 1
