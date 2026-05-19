@@ -11,4 +11,5 @@ SAM_ENCODER_VERSION = "vit_h"
 SAM_CHECKPOINT_PATH = "./checkpoints/sam_vit_h_4b8939.pth"
 # policy checkpoint
 POLICY_CHECKPOINT = "./checkpoints/pixelnav_A.ckpt"
+POINTNAV_CHECKPOINT = "./checkpoints/pointnav_weights.pth"
 YOLOE_CHECKPOINT_PATH = "./checkpoints/yoloe-11l-seg.pt"

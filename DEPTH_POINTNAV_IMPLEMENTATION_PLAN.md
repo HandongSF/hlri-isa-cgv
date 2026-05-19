@@ -35,7 +35,7 @@ Reference files:
 Use:
 
 ```text
-/home/gunminy/vlfm-main/data/pointnav_weights.pth
+./checkpoints/pointnav_weights.pth
 ```
 
 Policy observation keys:
@@ -59,7 +59,7 @@ Default config:
 ```yaml
 local_controller:
   name: depth_pointnav
-  pointnav_policy_path: /home/gunminy/vlfm-main/data/pointnav_weights.pth
+  pointnav_policy_path: ./checkpoints/pointnav_weights.pth
   depth_image_shape: [224, 224]
   pointnav_stop_radius: 0.9
   reset_pointnav_on_new_waypoint: true

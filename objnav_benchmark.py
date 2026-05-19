@@ -15,6 +15,14 @@ from constants import *
 from config_utils import hm3d_config
 from gpt4v_planner import GPT4V_Planner
 from policy_agent import Policy_Agent
+from depth_pointnav_controller import DepthPointNavConfig, DepthPointNavController
+from data_utils.geometry_tools import habitat_camera_intrinsic
+from data_utils.depth_pointnav_geometry import (
+    build_depth_waypoint_from_pixel,
+    compute_relative_pointgoal,
+    extract_waypoint_pixel_from_mask,
+    restore_metric_depth_from_habitat,
+)
 from habitat.utils.visualizations.maps import colorize_draw_agent_and_fit_to_height
 from cv_utils.yoloe_tools import initialize_yoloe_model
 from omegaconf import OmegaConf, open_dict
@@ -33,11 +41,17 @@ def adjust_topdown(metrics):
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--eval_episodes", type=int, default=400)
+    parser.add_argument("--local_controller", choices=["pixnav", "depth_pointnav"], default="depth_pointnav")
+    parser.add_argument("--pointnav_policy_path", type=str, default=POINTNAV_CHECKPOINT)
     return parser.parse_known_args()[0]
 
 
 args = get_args()
-habitat_config = hm3d_config(stage='val', episodes=args.eval_episodes)
+habitat_config = hm3d_config(
+    stage='val',
+    episodes=args.eval_episodes,
+    depth_pointnav=args.local_controller == "depth_pointnav",
+)
 print("scene_dataset =", habitat_config.habitat.simulator.scene_dataset)
 print("scenes_dir    =", habitat_config.habitat.dataset.scenes_dir)
 print("data_path     =", habitat_config.habitat.dataset.data_path)
@@ -50,6 +64,13 @@ with open_dict(habitat_config.habitat.task.measurements):
         habitat_config.habitat.task.measurements.num_steps = NumStepsMeasurementConfig()
 
 habitat_env = habitat.Env(habitat_config)
+camera_intrinsics = habitat_camera_intrinsic(habitat_config)
+depth_sensor_cfg = habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor
+min_depth = float(depth_sensor_cfg.min_depth)
+max_depth = float(depth_sensor_cfg.max_depth)
+camera_height = float(habitat_config.habitat.simulator.agents.main_agent.sim_sensors.rgb_sensor.position[1])
+print("local_controller =", args.local_controller)
+print("task_actions     =", habitat_config.habitat.task.actions)
 
 DETECT_OBJECTS = ['bed', 'sofa', 'chair', 'plant', 'tv', 'toilet', 'floor']
 yoloe_model = initialize_yoloe_model(
@@ -64,8 +85,53 @@ try:
 except TypeError:
     nav_planner = GPT4V_Planner(yoloe_model, yoloe_model)
 
-nav_executor = Policy_Agent(model_path=POLICY_CHECKPOINT)
+if args.local_controller == "depth_pointnav":
+    nav_executor = DepthPointNavController(
+        DepthPointNavConfig(pointnav_policy_path=args.pointnav_policy_path)
+    )
+else:
+    nav_executor = Policy_Agent(model_path=POLICY_CHECKPOINT)
 evaluation_metrics = []
+
+
+def yaw_to_rotation(yaw):
+    c = np.cos(float(yaw))
+    s = np.sin(float(yaw))
+    return np.array(
+        [
+            [c, -s, 0.0],
+            [s, c, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+
+
+def get_vlfm_pose_from_obs(obs):
+    if "gps" not in obs or "compass" not in obs:
+        raise KeyError("depth_pointnav requires Habitat gps and compass observations")
+    gps = np.asarray(obs["gps"], dtype=np.float32).reshape(-1)
+    heading = float(np.asarray(obs["compass"]).reshape(-1)[0])
+    agent_xy = np.array([gps[0], -gps[1]], dtype=np.float32)
+    camera_position = np.array([agent_xy[0], agent_xy[1], camera_height], dtype=np.float32)
+    return agent_xy, heading, camera_position, yaw_to_rotation(heading)
+
+
+def build_current_depth_waypoint(obs, goal_mask):
+    waypoint_pixel = extract_waypoint_pixel_from_mask(goal_mask)
+    if waypoint_pixel is None:
+        return None
+    _, heading, camera_position, camera_rotation = get_vlfm_pose_from_obs(obs)
+    depth_metric = restore_metric_depth_from_habitat(obs["depth"], min_depth, max_depth)
+    return build_depth_waypoint_from_pixel(
+        pixel=waypoint_pixel,
+        depth_metric=depth_metric,
+        camera_intrinsics=camera_intrinsics,
+        camera_position=camera_position,
+        camera_rotation=camera_rotation,
+        min_depth=min_depth,
+        max_depth=max_depth,
+    )
 
 for i in tqdm(range(args.eval_episodes)):
     obs = habitat_env.reset()
@@ -128,10 +194,77 @@ for i in tqdm(range(args.eval_episodes)):
 
     episode_images.append(vis_rgb)
     episode_images.append(vis_rgb)
-    nav_executor.reset(goal_image, goal_mask)
+    if args.local_controller == "depth_pointnav":
+        nav_executor.reset()
+    else:
+        nav_executor.reset(goal_image, goal_mask)
 
+    current_waypoint = None
+    need_new_waypoint = True
 
     while not habitat_env.episode_over:
+        if args.local_controller == "depth_pointnav":
+            if current_waypoint is None or need_new_waypoint:
+                (
+                    goal_image,
+                    goal_mask,
+                    pri_flag,
+                    obj_detected,
+                    vis_rgb,
+                ) = nav_planner.apply_priors_on_image(obs['rgb'])
+                goal_flag = obj_detected
+                current_waypoint = build_current_depth_waypoint(obs, goal_mask)
+                episode_images.append(vis_rgb)
+                episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+
+                if current_waypoint is None or not current_waypoint.valid:
+                    print("depth waypoint failed", None if current_waypoint is None else current_waypoint.failure_reason)
+                    obs = habitat_env.step(2)
+                    episode_images.append(obs['rgb'])
+                    episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                    step_counter += 1
+                    current_waypoint = None
+                    need_new_waypoint = True
+                    continue
+
+                nav_executor.on_new_waypoint()
+                need_new_waypoint = False
+
+            agent_xy, heading, _, _ = get_vlfm_pose_from_obs(obs)
+            pointgoal = compute_relative_pointgoal(
+                waypoint_world=current_waypoint.world_position,
+                current_agent_xy=agent_xy,
+                current_heading=heading,
+            )
+            print(
+                "depth_pointnav",
+                "pixel", (current_waypoint.pixel_u, current_waypoint.pixel_v),
+                "depth", current_waypoint.initial_depth,
+                "rho", pointgoal.rho,
+                "theta", pointgoal.theta,
+            )
+
+            if pointgoal.rho < nav_executor.cfg.pointnav_stop_radius:
+                current_waypoint = None
+                need_new_waypoint = True
+                obs = habitat_env.step(2)
+                episode_images.append(obs['rgb'])
+                episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+                step_counter += 1
+                continue
+
+            action = nav_executor.act(obs['depth'], pointgoal.rho, pointgoal.theta)
+            if action == 0 and not goal_flag:
+                current_waypoint = None
+                need_new_waypoint = True
+                obs = habitat_env.step(2)
+            else:
+                obs = habitat_env.step(action)
+            episode_images.append(obs['rgb'])
+            episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
+            step_counter += 1
+            continue
+
         action, skill_image = nav_executor.step(obs['rgb'], habitat_env.sim.previous_step_collided)
 
         if action != 0 or goal_flag:

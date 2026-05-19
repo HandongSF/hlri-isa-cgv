@@ -10,8 +10,30 @@ from habitat.config.default_structured_configs import (
 )
 from habitat.config.default_structured_configs import LookUpActionConfig,LookDownActionConfig,NumStepsMeasurementConfig
 
+try:
+    from habitat.config.default_structured_configs import CompassSensorConfig, GPSSensorConfig
+except ImportError:
+    CompassSensorConfig = None
+    GPSSensorConfig = None
+
+
+def _enable_depth_pointnav_mode(habitat_config):
+    if CompassSensorConfig is None or GPSSensorConfig is None:
+        raise ImportError("Depth PointNav mode requires CompassSensorConfig and GPSSensorConfig.")
+
+    habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.min_depth = 0.5
+    habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.max_depth = 5.0
+    habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.normalize_depth = True
+
+    if not hasattr(habitat_config.habitat.task, "lab_sensors") or habitat_config.habitat.task.lab_sensors is None:
+        habitat_config.habitat.task.lab_sensors = {}
+    if "gps" not in habitat_config.habitat.task.lab_sensors:
+        habitat_config.habitat.task.lab_sensors["gps"] = GPSSensorConfig()
+    if "compass" not in habitat_config.habitat.task.lab_sensors:
+        habitat_config.habitat.task.lab_sensors["compass"] = CompassSensorConfig()
+
 # habitat config used to run the benchmark for objnav in hm3d dataset
-def hm3d_config(path:str=HM3D_CONFIG_PATH,stage:str='val',episodes=200):
+def hm3d_config(path:str=HM3D_CONFIG_PATH,stage:str='val',episodes=200, depth_pointnav=False):
     habitat_config = habitat.get_config(path)
     with read_write(habitat_config):
         habitat_config.habitat.dataset.split = stage
@@ -44,10 +66,12 @@ def hm3d_config(path:str=HM3D_CONFIG_PATH,stage:str='val',episodes=200):
         habitat_config.habitat.simulator.turn_angle=30
         habitat_config.habitat.task.measurements.success.success_distance = 1.0
         habitat_config.habitat.simulator.habitat_sim_v0.allow_sliding = True
+        if depth_pointnav:
+            _enable_depth_pointnav_mode(habitat_config)
     return habitat_config
 
 # habitat config used to run the benchmark for objnav in mp3d dataset
-def mp3d_config(path:str=MP3D_CONFIG_PATH,stage:str='val',episodes=200):
+def mp3d_config(path:str=MP3D_CONFIG_PATH,stage:str='val',episodes=200, depth_pointnav=False):
     habitat_config = habitat.get_config(path)
     with read_write(habitat_config):
         habitat_config.habitat.dataset.split = stage
@@ -80,6 +104,8 @@ def mp3d_config(path:str=MP3D_CONFIG_PATH,stage:str='val',episodes=200):
         habitat_config.habitat.simulator.turn_angle=30
         habitat_config.habitat.task.measurements.success.success_distance = 1.0
         habitat_config.habitat.simulator.habitat_sim_v0.allow_sliding = True
+        if depth_pointnav:
+            _enable_depth_pointnav_mode(habitat_config)
     return habitat_config
 
 # habitat config used to generate the pixel-nav training data in hm3d scenes
