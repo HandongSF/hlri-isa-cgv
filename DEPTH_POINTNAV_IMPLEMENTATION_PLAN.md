@@ -63,6 +63,7 @@ local_controller:
   depth_image_shape: [224, 224]
   pointnav_stop_radius: 0.9
   reset_pointnav_on_new_waypoint: true
+  depth_sensor_normalize_depth: true
 ```
 
 VLFM PointNav uses `Discrete(4)`. Verify the Habitat action ID mapping in FENav before
@@ -76,6 +77,121 @@ TURN_RIGHT
 ```
 
 Do not reuse PixNav-only action handling for actions `4` and `5` in the PointNav path.
+
+## First-Pass Implementation Decisions
+
+Use these decisions for the first implementation.
+
+1. VLFM PointNav code usage
+
+   Do not import VLFM directly from `/home/gunminy/vlfm-main` at runtime. Vendor only the
+   minimal PointNav policy code needed for inference into FENav.
+
+   Recommended layout:
+
+   ```text
+   third_party/
+     vlfm_pointnav/
+       pointnav_policy.py
+       non_habitat_policy/
+         nh_pointnav_policy.py
+         resnet.py
+         rnn_state_encoder.py
+   ```
+
+   Keep original VLFM copyright/license headers in vendored files.
+
+2. New FENav files
+
+   ```text
+   depth_pointnav_controller.py
+   data_utils/depth_pointnav_geometry.py
+   third_party/vlfm_pointnav/...
+   ```
+
+   Keep `objnav_benchmark.py` changes limited to controller selection and loop wiring.
+
+3. RGB/depth/pose synchronization
+
+   First implementation must avoid using a historical `goal_mask` with the current
+   `obs["depth"]`.
+
+   Use this flow:
+
+   ```text
+   choose direction with existing planner/panorama logic
+   rotate agent to the chosen direction
+   run waypoint selection again on the current RGB frame
+   immediately use current RGB, current depth, and current camera pose
+   ```
+
+   This is less efficient than storing full RGB-D-pose history, but it is safer for the
+   first working version.
+
+4. Depth handling
+
+   Follow VLFM's HabitatSim path.
+
+   In `depth_pointnav` mode, configure Habitat depth as normalized depth:
+
+   ```python
+   habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.normalize_depth = True
+   habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.min_depth = 0.5
+   habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.max_depth = 5.0
+   ```
+
+   Then use `obs["depth"]` exactly like VLFM Habitat policy does:
+
+   ```text
+   obs["depth"] normalized [0, 1] -> PointNav policy
+   obs["depth"] restored to metric meters -> geometry/backprojection only
+   ```
+
+   Do not normalize metric depth inside the PointNav controller for the HabitatSim path.
+   The controller should only resize and format the already-normalized Habitat depth.
+
+5. Action handling
+
+   PointNav path uses only Habitat `Discrete(4)` actions. Print or log
+   `habitat_config.habitat.task.actions` at startup and verify:
+
+   ```text
+   0 STOP
+   1 MOVE_FORWARD
+   2 TURN_LEFT
+   3 TURN_RIGHT
+   ```
+
+   PixNav's 6-action handling and `heading_offset` logic must remain isolated to the
+   PixNav controller path.
+
+## Habitat Sensor Requirements
+
+Use the same pose source as VLFM's Habitat policy path:
+
+```python
+x, y = obs["gps"]
+current_heading = obs["compass"]
+current_agent_xy = np.array([x, -y])
+```
+
+Required Habitat lab sensors:
+
+```text
+gps_sensor
+compass_sensor
+```
+
+Add these sensors to the FENav Habitat config for `depth_pointnav` mode. Do not derive
+heading from simulator quaternion in the first implementation unless the sensor path is
+unavailable.
+
+Reason:
+
+- VLFM computes `rho/theta` from `observations["gps"]` and `observations["compass"]`.
+- Matching that convention reduces axis/sign bugs.
+- Habitat GPS makes west negative in VLFM, so VLFM flips the second coordinate with
+  `current_agent_xy = [gps_x, -gps_y]`.
 
 ## Required New Functions
 
@@ -102,7 +218,7 @@ Add:
 
 ```python
 def lookup_valid_depth(
-    depth: np.ndarray,
+    depth_metric: np.ndarray,
     pixel: tuple[int, int],
     min_depth: float,
     max_depth: float,
@@ -113,6 +229,7 @@ def lookup_valid_depth(
 
 Implementation:
 
+- Input is metric depth in meters, not normalized Habitat depth.
 - Read depth at `(u, v)`.
 - Valid depth must be finite and `min_depth < d < max_depth`.
 - If invalid, search a local window and return the median valid depth.
@@ -125,7 +242,7 @@ Add:
 ```python
 def build_depth_waypoint_from_pixel(
     pixel: tuple[int, int],
-    depth: np.ndarray,
+    depth_metric: np.ndarray,
     camera_intrinsics: np.ndarray,
     camera_position: np.ndarray,
     camera_rotation: np.ndarray,
@@ -135,7 +252,12 @@ def build_depth_waypoint_from_pixel(
     ...
 ```
 
-Use metric depth here.
+Use metric depth here. In HabitatSim `depth_pointnav` mode, `obs["depth"]` is normalized,
+so restore metric depth before calling this function:
+
+```python
+depth_metric = depth_norm * (max_depth - min_depth) + min_depth
+```
 
 Important:
 
@@ -171,24 +293,44 @@ def compute_relative_pointgoal(
     ...
 ```
 
+For the first implementation, `current_agent_xy` and `current_heading` must come from:
+
+```python
+x, y = obs["gps"]
+current_agent_xy = np.array([x, -y])
+current_heading = float(obs["compass"])
+```
+
 Test this sign once in Habitat:
 
 - Center pixel should produce `theta ~= 0`.
 - Left-side pixel should make the policy turn left.
 - Right-side pixel should make the policy turn right.
 
-### 5. Depth preprocessing for PointNav
+### 5. Depth handling for HabitatSim PointNav
 
-Geometry needs metric depth. VLFM PointNav expects policy depth shaped and normalized
-for inference.
+VLFM Habitat policy passes normalized Habitat depth directly to PointNav and only resizes
+it:
+
+```python
+"nav_depth": observations["depth"]
+"depth": image_resize(nav_depth, depth_image_shape, channels_last=True)
+```
+
+FENav should do the same for `depth_pointnav` mode.
 
 Add:
 
 ```python
-def preprocess_depth_for_pointnav(
-    depth: np.ndarray | torch.Tensor,
+def restore_metric_depth_from_habitat(
+    depth_norm: np.ndarray,
     min_depth: float,
     max_depth: float,
+) -> np.ndarray:
+    ...
+
+def format_depth_for_pointnav(
+    depth_norm: np.ndarray | torch.Tensor,
     output_size: tuple[int, int],
     device: str,
 ) -> torch.Tensor:
@@ -197,17 +339,18 @@ def preprocess_depth_for_pointnav(
 
 Implementation:
 
-- Input may be `(H, W)` or `(H, W, 1)`.
-- Clip to `[min_depth, max_depth]`.
-- Normalize to `[0, 1]`.
-- Resize to `output_size`, default `(224, 224)`.
-- Return `(1, H, W, 1)` float32 tensor.
+- `restore_metric_depth_from_habitat(...)` converts normalized Habitat depth to meters:
+  `depth_norm * (max_depth - min_depth) + min_depth`.
+- `format_depth_for_pointnav(...)` does not normalize again.
+- `format_depth_for_pointnav(...)` resizes to `output_size`, default `(224, 224)`.
+- `format_depth_for_pointnav(...)` returns `(1, H, W, 1)` float32 tensor.
 
 Use:
 
 ```python
-depth_for_geometry = obs["depth"]  # metric
-depth_for_policy = preprocess_depth_for_pointnav(obs["depth"], ...)
+depth_norm = obs["depth"]  # normalized Habitat depth, [0, 1]
+depth_metric = restore_metric_depth_from_habitat(depth_norm, min_depth, max_depth)
+depth_for_policy = format_depth_for_pointnav(depth_norm, output_size, device)
 ```
 
 ### 6. Depth PointNav controller wrapper
@@ -241,7 +384,7 @@ Behavior:
 Internal policy call:
 
 ```python
-depth_tensor = preprocess_depth_for_pointnav(depth_obs, ...)
+depth_tensor = format_depth_for_pointnav(depth_obs, output_size, device)
 rho_theta_tensor = torch.tensor([[rho, theta]], device=device, dtype=torch.float32)
 obs_pointnav = {
     "depth": depth_tensor,
@@ -269,7 +412,11 @@ elif controller_name == "depth_pointnav":
 
         current_waypoint = build_depth_waypoint_from_pixel(
             pixel=waypoint_pixel,
-            depth=obs["depth"],
+            depth_metric=restore_metric_depth_from_habitat(
+                obs["depth"],
+                min_depth=min_depth,
+                max_depth=max_depth,
+            ),
             camera_intrinsics=camera_intrinsics,
             camera_position=current_camera_position,
             camera_rotation=current_camera_rotation,
@@ -285,8 +432,8 @@ elif controller_name == "depth_pointnav":
 
     pointgoal = compute_relative_pointgoal(
         waypoint_world=current_waypoint.world_position,
-        current_agent_xy=current_agent_xy,
-        current_heading=current_heading,
+        current_agent_xy=np.array([obs["gps"][0], -obs["gps"][1]]),
+        current_heading=float(obs["compass"]),
     )
 
     if pointgoal.rho < pointnav_stop_radius:
