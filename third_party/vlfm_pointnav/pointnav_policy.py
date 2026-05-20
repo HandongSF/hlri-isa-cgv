@@ -1,6 +1,8 @@
 # Copyright (c) 2023 Boston Dynamics AI Institute LLC. All rights reserved.
 
+from types import ModuleType
 from typing import Any, Dict, Tuple, Union
+import sys
 
 import numpy as np
 import torch
@@ -172,25 +174,65 @@ def load_pointnav_policy(file_path: str) -> PointNavResNetTensorOutputPolicy:
             state_dict = torch.load(file_path + ".state_dict", map_location="cpu")
         else:
             ckpt_dict = torch.load(file_path, map_location="cpu")
-            pointnav_policy = PointNavResNetTensorOutputPolicy.from_config(ckpt_dict["config"], obs_space, action_space)
+            cfg = ckpt_dict["config"]
+            pointnav_policy = PointNavResNetTensorOutputPolicy(
+                observation_space=obs_space,
+                action_space=action_space,
+                hidden_size=cfg.habitat_baselines.rl.ppo.hidden_size,
+                num_recurrent_layers=cfg.habitat_baselines.rl.ddppo.num_recurrent_layers,
+                rnn_type=cfg.habitat_baselines.rl.ddppo.rnn_type,
+                resnet_baseplanes=32,
+                backbone=cfg.habitat_baselines.rl.ddppo.backbone,
+                normalize_visual_inputs=False,
+                force_blind_policy=getattr(cfg.habitat_baselines, "force_blind_policy", False),
+                policy_config=cfg.habitat_baselines.rl.policy,
+                aux_loss_config=getattr(cfg.habitat_baselines.rl, "auxiliary_losses", None),
+                fuse_keys=None,
+            )
             state_dict = ckpt_dict["state_dict"]
         pointnav_policy.load_state_dict(state_dict)
         return pointnav_policy
 
     else:
+        _install_habitat_baselines_config_shims()
         ckpt_dict = torch.load(file_path, map_location="cpu")
+        if "state_dict" in ckpt_dict:
+            ckpt_dict = ckpt_dict["state_dict"]
         pointnav_policy = PointNavResNetTensorOutputPolicy()
         current_state_dict = pointnav_policy.state_dict()
-        # Let old checkpoints work with new code
-        if "net.prev_action_embedding_cont.bias" not in ckpt_dict.keys():
-            ckpt_dict["net.prev_action_embedding_cont.bias"] = ckpt_dict["net.prev_action_embedding.bias"]
-        if "net.prev_action_embedding_cont.weights" not in ckpt_dict.keys():
-            ckpt_dict["net.prev_action_embedding_cont.weight"] = ckpt_dict["net.prev_action_embedding.weight"]
-
-        pointnav_policy.load_state_dict({k: v for k, v in ckpt_dict.items() if k in current_state_dict})
+        filtered_state_dict = {k: v for k, v in ckpt_dict.items() if k in current_state_dict}
+        pointnav_policy.load_state_dict(filtered_state_dict)
         unused_keys = [k for k in ckpt_dict.keys() if k not in current_state_dict]
-        print(f"The following unused keys were not loaded when loading the pointnav policy: {unused_keys}")
+        if unused_keys:
+            print(f"The following unused keys were not loaded when loading the pointnav policy: {unused_keys}")
         return pointnav_policy
+
+
+def _install_habitat_baselines_config_shims() -> None:
+    if "habitat_baselines" in sys.modules:
+        return
+
+    hb_module = ModuleType("habitat_baselines")
+    hb_config_module = ModuleType("habitat_baselines.config")
+    hb_structured_module = ModuleType("habitat_baselines.config.default_structured_configs")
+
+    _class_cache: Dict[str, type] = {}
+
+    def _get_class(name: str) -> type:
+        if name not in _class_cache:
+            _class_cache[name] = type(name, (), {})
+        return _class_cache[name]
+
+    def _module_getattr(name: str) -> Any:
+        return _get_class(name)
+
+    hb_structured_module.__getattr__ = _module_getattr  # type: ignore[attr-defined]
+    hb_config_module.default_structured_configs = hb_structured_module
+    hb_module.config = hb_config_module
+
+    sys.modules["habitat_baselines"] = hb_module
+    sys.modules["habitat_baselines.config"] = hb_config_module
+    sys.modules["habitat_baselines.config.default_structured_configs"] = hb_structured_module
 
 
 def move_obs_to_device(

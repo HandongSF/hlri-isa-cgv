@@ -42,10 +42,10 @@ class ResNetEncoder(nn.Module):
 
 
 class PointNavResNetNet(nn.Module):
-    def __init__(self, discrete_actions: bool = False, no_fwd_dict: bool = False):
+    def __init__(self, discrete_actions: bool = True, no_fwd_dict: bool = False):
         super().__init__()
         if discrete_actions:
-            self.prev_action_embedding_discrete = nn.Embedding(4 + 1, 32)
+            self.prev_action_embedding = nn.Embedding(4 + 1, 32)
         else:
             self.prev_action_embedding_cont = nn.Linear(in_features=2, out_features=32, bias=True)
         self.tgt_embeding = nn.Linear(in_features=3, out_features=32, bias=True)
@@ -89,7 +89,7 @@ class PointNavResNetNet(nn.Module):
             prev_actions = prev_actions.squeeze(-1)
             start_token = torch.zeros_like(prev_actions)
             # The mask means the previous action will be zero, an extra dummy action
-            prev_actions = self.prev_action_embedding_discrete(
+            prev_actions = self.prev_action_embedding(
                 torch.where(masks.view(-1), prev_actions + 1, start_token)
             )
         else:
@@ -137,11 +137,39 @@ class GaussianNet(nn.Module):
         return CustomNormal(mu, std, validate_args=False)
 
 
-class PointNavResNetPolicy(nn.Module):
-    def __init__(self) -> None:
+class CategoricalNet(nn.Module):
+    def __init__(self, num_inputs: int, num_outputs: int) -> None:
         super().__init__()
-        self.net = PointNavResNetNet()
-        self.action_distribution = GaussianNet(512, 2)
+        self.linear = nn.Linear(num_inputs, num_outputs)
+        nn.init.orthogonal_(self.linear.weight, gain=0.01)
+        nn.init.constant_(self.linear.bias, 0)
+
+    def forward(self, x: torch.Tensor) -> torch.distributions.Categorical:
+        logits = self.linear(x).float()
+        return torch.distributions.Categorical(logits=logits)
+
+
+class CriticHead(nn.Module):
+    def __init__(self, num_inputs: int) -> None:
+        super().__init__()
+        self.fc = nn.Linear(num_inputs, 1)
+        nn.init.orthogonal_(self.fc.weight)
+        nn.init.constant_(self.fc.bias, 0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.fc(x)
+
+
+class PointNavResNetPolicy(nn.Module):
+    def __init__(self, discrete_actions: bool = True) -> None:
+        super().__init__()
+        self.net = PointNavResNetNet(discrete_actions=discrete_actions)
+        if discrete_actions:
+            self.action_distribution = CategoricalNet(512, 4)
+        else:
+            self.action_distribution = GaussianNet(512, 2)
+        self.critic = CriticHead(512)
+        self.discrete_actions = discrete_actions
 
     def act(
         self,
@@ -153,11 +181,18 @@ class PointNavResNetPolicy(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         features, rnn_hidden_states, _ = self.net(observations, rnn_hidden_states, prev_actions, masks)
         distribution = self.action_distribution(features)
+        _ = self.critic(features)
 
-        if deterministic:
-            action = distribution.mean
+        if self.discrete_actions:
+            if deterministic:
+                action = distribution.probs.argmax(dim=-1, keepdim=True)
+            else:
+                action = distribution.sample().unsqueeze(-1)
         else:
-            action = distribution.sample()
+            if deterministic:
+                action = distribution.mean
+            else:
+                action = distribution.sample()
 
         return action, rnn_hidden_states
 

@@ -1,9 +1,11 @@
+import os
+
 # data-collection related directory
-HABITAT_ROOT_DIR = "~/habitat-lab"
+HABITAT_ROOT_DIR = os.path.expanduser("~/habitat-lab")
 HM3D_CONFIG_PATH = f"{HABITAT_ROOT_DIR}/habitat-lab/habitat/config/benchmark/nav/objectnav/objectnav_hm3d.yaml"
 MP3D_CONFIG_PATH = f"{HABITAT_ROOT_DIR}/habitat-lab/habitat/config/benchmark/nav/objectnav/objectnav_mp3d.yaml"
-SCENE_PREFIX = "~/FENav/data/scene_datasets/"
-EPISODE_PREFIX = "~/FENav/data/datasets/"
+SCENE_PREFIX = os.path.expanduser("~/FENav/data/scene_datasets/")
+EPISODE_PREFIX = os.path.expanduser("~/FENav/data/datasets/")
 # detection & segmentation related configs and checkpoints
 GROUNDING_DINO_CONFIG_PATH = "./checkpoints/GroundingDINO_SwinB_cfg.py"
 GROUNDING_DINO_CHECKPOINT_PATH = "./checkpoints/groundingdino_swinb_cogcoor.pth"

@@ -27,10 +27,10 @@ def _enable_depth_pointnav_mode(habitat_config):
 
     if not hasattr(habitat_config.habitat.task, "lab_sensors") or habitat_config.habitat.task.lab_sensors is None:
         habitat_config.habitat.task.lab_sensors = {}
-    if "gps" not in habitat_config.habitat.task.lab_sensors:
-        habitat_config.habitat.task.lab_sensors["gps"] = GPSSensorConfig()
-    if "compass" not in habitat_config.habitat.task.lab_sensors:
-        habitat_config.habitat.task.lab_sensors["compass"] = CompassSensorConfig()
+    if "gps_sensor" not in habitat_config.habitat.task.lab_sensors:
+        habitat_config.habitat.task.lab_sensors["gps_sensor"] = GPSSensorConfig()
+    if "compass_sensor" not in habitat_config.habitat.task.lab_sensors:
+        habitat_config.habitat.task.lab_sensors["compass_sensor"] = CompassSensorConfig()
 
 # habitat config used to run the benchmark for objnav in hm3d dataset
 def hm3d_config(path:str=HM3D_CONFIG_PATH,stage:str='val',episodes=200, depth_pointnav=False):
