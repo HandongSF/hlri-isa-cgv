@@ -133,6 +133,15 @@ def build_current_depth_waypoint(obs, goal_mask):
         max_depth=max_depth,
     )
 
+
+def refresh_depth_waypoint(obs, goal_mask, controller):
+    waypoint = build_current_depth_waypoint(obs, goal_mask)
+    if waypoint is None or not waypoint.valid:
+        print("depth waypoint failed", None if waypoint is None else waypoint.failure_reason)
+        return None
+    controller.on_new_waypoint()
+    return waypoint
+
 for i in tqdm(range(args.eval_episodes)):
     obs = habitat_env.reset()
 
@@ -196,78 +205,45 @@ for i in tqdm(range(args.eval_episodes)):
     episode_images.append(vis_rgb)
     if args.local_controller == "depth_pointnav":
         nav_executor.reset()
+        current_waypoint = refresh_depth_waypoint(obs, goal_mask, nav_executor)
     else:
         nav_executor.reset(goal_image, goal_mask)
-
-    current_waypoint = None
-    need_new_waypoint = True
+        current_waypoint = None
 
     while not habitat_env.episode_over:
         if args.local_controller == "depth_pointnav":
-            if current_waypoint is None or need_new_waypoint:
-                (
-                    goal_image,
-                    goal_mask,
-                    pri_flag,
-                    obj_detected,
-                    vis_rgb,
-                ) = nav_planner.apply_priors_on_image(obs['rgb'])
-                goal_flag = obj_detected
-                current_waypoint = build_current_depth_waypoint(obs, goal_mask)
-                episode_images.append(vis_rgb)
-                episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
-
-                if current_waypoint is None or not current_waypoint.valid:
-                    print("depth waypoint failed", None if current_waypoint is None else current_waypoint.failure_reason)
-                    obs = habitat_env.step(2)
-                    episode_images.append(obs['rgb'])
-                    episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
-                    step_counter += 1
-                    current_waypoint = None
-                    need_new_waypoint = True
-                    continue
-
-                nav_executor.on_new_waypoint()
-                need_new_waypoint = False
-
-            agent_xy, heading, _, _ = get_vlfm_pose_from_obs(obs)
-            pointgoal = compute_relative_pointgoal(
-                waypoint_world=current_waypoint.world_position,
-                current_agent_xy=agent_xy,
-                current_heading=heading,
-            )
-            print(
-                "depth_pointnav",
-                "pixel", (current_waypoint.pixel_u, current_waypoint.pixel_v),
-                "depth", current_waypoint.initial_depth,
-                "rho", pointgoal.rho,
-                "theta", pointgoal.theta,
-            )
-
-            if pointgoal.rho < nav_executor.cfg.pointnav_stop_radius:
-                current_waypoint = None
-                need_new_waypoint = True
-                obs = habitat_env.step(2)
-                episode_images.append(obs['rgb'])
-                episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
-                step_counter += 1
-                continue
-
-            action = nav_executor.act(obs['depth'], pointgoal.rho, pointgoal.theta)
-            if action == 0 and not goal_flag:
-                current_waypoint = None
-                need_new_waypoint = True
-                obs = habitat_env.step(2)
+            if current_waypoint is None or not current_waypoint.valid:
+                action = 0
+                request_replan = True
             else:
-                obs = habitat_env.step(action)
-            episode_images.append(obs['rgb'])
-            episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
-            step_counter += 1
-            continue
+                agent_xy, heading, _, _ = get_vlfm_pose_from_obs(obs)
+                pointgoal = compute_relative_pointgoal(
+                    waypoint_world=current_waypoint.world_position,
+                    current_agent_xy=agent_xy,
+                    current_heading=heading,
+                )
+                print(
+                    "depth_pointnav",
+                    "pixel", (current_waypoint.pixel_u, current_waypoint.pixel_v),
+                    "depth", current_waypoint.initial_depth,
+                    "rho", pointgoal.rho,
+                    "theta", pointgoal.theta,
+                )
 
-        action, skill_image = nav_executor.step(obs['rgb'], habitat_env.sim.previous_step_collided)
+                if pointgoal.rho < nav_executor.cfg.pointnav_stop_radius:
+                    action = 0
+                    request_replan = True
+                    current_waypoint = None
+                else:
+                    action = nav_executor.act(obs['depth'], pointgoal.rho, pointgoal.theta)
+                    request_replan = action == 0 and not goal_flag
+                    if request_replan:
+                        current_waypoint = None
+        else:
+            action, skill_image = nav_executor.step(obs['rgb'], habitat_env.sim.previous_step_collided)
+            request_replan = action == 0 and not goal_flag
 
-        if action != 0 or goal_flag:
+        if not request_replan:
             if action == 4:
                 heading_offset += 1
             elif action == 5:
@@ -330,8 +306,12 @@ for i in tqdm(range(args.eval_episodes)):
                 episode_images.append(verify_vis)
 
                 if verify_obj_detected:
+                    goal_image = verify_goal_image
+                    goal_mask = verify_goal_mask
                     goal_flag = True
                     pending_verify = False
+                    if args.local_controller == "depth_pointnav":
+                        current_waypoint = refresh_depth_waypoint(obs, goal_mask, nav_executor)
                     continue
 
                 elif verify_pri_flag:
@@ -343,7 +323,11 @@ for i in tqdm(range(args.eval_episodes)):
                     goal_flag = False
                     prev_boxes = getattr(nav_planner, "_last_bboxes", [])
 
-                nav_executor.reset(verify_goal_image, verify_goal_mask)
+                goal_image, goal_mask = verify_goal_image, verify_goal_mask
+                if args.local_controller == "depth_pointnav":
+                    current_waypoint = refresh_depth_waypoint(obs, goal_mask, nav_executor)
+                else:
+                    nav_executor.reset(goal_image, goal_mask)
                 continue
             
             prev_boxes = getattr(nav_planner, "_last_bboxes", []) if prev_boxes is None else prev_boxes
@@ -454,7 +438,10 @@ for i in tqdm(range(args.eval_episodes)):
             print("goal _flag", goal_flag)
             print("step_counter", step_counter)
             step_counter = 0
-            nav_executor.reset(goal_image, goal_mask)
+            if args.local_controller == "depth_pointnav":
+                current_waypoint = refresh_depth_waypoint(obs, goal_mask, nav_executor)
+            else:
+                nav_executor.reset(goal_image, goal_mask)
 
     habitat_env.step = _orig_step
 
