@@ -20,9 +20,10 @@ from data_utils.geometry_tools import habitat_camera_intrinsic
 from data_utils.depth_pointnav_geometry import (
     build_depth_waypoint_from_pixel,
     compute_relative_pointgoal,
-    extract_waypoint_pixel_from_mask,
+    extract_anchor_pixel_from_mask,
     restore_metric_depth_from_habitat,
 )
+from data_utils.reachable_waypoint import resolve_reachable_floor_waypoint
 from habitat.utils.visualizations.maps import colorize_draw_agent_and_fit_to_height
 from cv_utils.yoloe_tools import initialize_yoloe_model
 from omegaconf import OmegaConf, open_dict
@@ -118,12 +119,12 @@ def get_vlfm_pose_from_obs(obs):
 
 
 def build_current_depth_waypoint(obs, goal_mask):
-    waypoint_pixel = extract_waypoint_pixel_from_mask(goal_mask)
+    waypoint_pixel = extract_anchor_pixel_from_mask(goal_mask)
     if waypoint_pixel is None:
         return None
-    _, heading, camera_position, camera_rotation = get_vlfm_pose_from_obs(obs)
+    agent_xy, heading, camera_position, camera_rotation = get_vlfm_pose_from_obs(obs)
     depth_metric = restore_metric_depth_from_habitat(obs["depth"], min_depth, max_depth)
-    return build_depth_waypoint_from_pixel(
+    raw_waypoint = build_depth_waypoint_from_pixel(
         pixel=waypoint_pixel,
         depth_metric=depth_metric,
         camera_intrinsics=camera_intrinsics,
@@ -131,6 +132,14 @@ def build_current_depth_waypoint(obs, goal_mask):
         camera_rotation=camera_rotation,
         min_depth=min_depth,
         max_depth=max_depth,
+    )
+    return resolve_reachable_floor_waypoint(
+        raw_waypoint=raw_waypoint,
+        depth_metric=depth_metric,
+        camera_intrinsics=camera_intrinsics,
+        camera_position=camera_position,
+        camera_rotation=camera_rotation,
+        agent_xy=agent_xy,
     )
 
 
@@ -226,6 +235,8 @@ for i in tqdm(range(args.eval_episodes)):
                     "depth_pointnav",
                     "pixel", (current_waypoint.pixel_u, current_waypoint.pixel_v),
                     "depth", current_waypoint.initial_depth,
+                    "target", current_waypoint.target_kind,
+                    "pn_step", nav_executor.steps_for_waypoint,
                     "rho", pointgoal.rho,
                     "theta", pointgoal.theta,
                 )

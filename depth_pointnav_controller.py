@@ -14,6 +14,7 @@ class DepthPointNavConfig:
     pointnav_policy_path: str = POINTNAV_CHECKPOINT
     depth_image_shape: Tuple[int, int] = (224, 224)
     pointnav_stop_radius: float = 0.9
+    max_pointnav_steps: int = 32
     reset_pointnav_on_new_waypoint: bool = True
     device: str = "cuda"
 
@@ -58,16 +59,25 @@ class DepthPointNavController:
         self.depth_image_shape = _shape_tuple(cfg.depth_image_shape)
         self.policy = WrappedPointNavResNetPolicy(cfg.pointnav_policy_path, device=self.device)
         self._has_acted = False
+        self._steps_for_waypoint = 0
 
     def reset(self) -> None:
         self.policy.reset()
         self._has_acted = False
+        self._steps_for_waypoint = 0
 
     def on_new_waypoint(self) -> None:
         if self.cfg.reset_pointnav_on_new_waypoint:
             self.reset()
 
+    @property
+    def steps_for_waypoint(self) -> int:
+        return self._steps_for_waypoint
+
     def act(self, depth_obs: Union[np.ndarray, torch.Tensor], rho: float, theta: float) -> int:
+        if self.cfg.max_pointnav_steps > 0 and self._steps_for_waypoint >= self.cfg.max_pointnav_steps:
+            return 0
+
         depth_tensor = format_depth_for_pointnav(depth_obs, self.depth_image_shape, self.device)
         rho_theta_tensor = torch.tensor([[rho, theta]], device=self.device, dtype=torch.float32)
         observations = {
@@ -77,4 +87,5 @@ class DepthPointNavController:
         masks = torch.tensor([[self._has_acted]], device=self.device, dtype=torch.bool)
         action = self.policy.act(observations, masks, deterministic=True)
         self._has_acted = True
+        self._steps_for_waypoint += 1
         return int(action.detach().cpu().numpy().reshape(-1)[0])

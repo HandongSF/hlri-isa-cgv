@@ -15,13 +15,15 @@ goal_mask -> pixel -> 3D point -> PointNav goal
 Target flow:
 
 ```text
-goal_mask -> anchor pixel -> raw 3D anchor -> reachable floor point in current view -> PointNav goal
+goal_mask -> anchor pixel -> raw 3D anchor -> reachable floor or offset fallback -> PointNav goal
 ```
 
 ## Core Idea
 
-The pixel-derived 3D point is only an anchor. The actual PointNav target must be
-a reachable floor point near that anchor.
+The pixel-derived 3D point is only an anchor. The PointNav target should first
+be a reachable floor point derived from the current view. When no reachable
+floor is visible, the target becomes a short offset from the anchor toward the
+agent.
 
 ## Core Algorithm
 
@@ -33,7 +35,9 @@ a reachable floor point near that anchor.
 5. If that search fails, search the whole current image for reachable floor
    candidates.
 6. Choose the candidate whose 3D position is closest to the raw anchor.
-7. Use that candidate as the final waypoint for `rho, theta`.
+7. If no reachable floor is visible, create a fallback waypoint by offsetting
+   the raw anchor 0.1m toward the agent.
+8. Use the resolved point as the final waypoint for `rho, theta`.
 
 ## Traversability Definition
 
@@ -70,8 +74,14 @@ If Stage 1 fails, scan the whole current image for reachable floor pixels.
 Choose the floor point whose 3D position is closest to raw_anchor_world.
 ```
 
-If neither stage finds a reachable floor point, return an invalid waypoint so
-the planner can replan.
+If neither stage finds a reachable floor point, use an offset fallback:
+
+```text
+fallback_xy = raw_anchor_xy + normalize(agent_xy - raw_anchor_xy) * 0.1m
+```
+
+If the offset direction cannot be computed, return an invalid waypoint so the
+planner can replan.
 
 ## Required Code Changes
 
@@ -116,7 +126,9 @@ This function:
 1. Builds the local traversability map.
 2. Searches below the anchor pixel for reachable floor.
 3. Falls back to the closest reachable floor point in the current image.
-4. Returns the resolved floor waypoint.
+4. Falls back to a 0.1m anchor-to-agent offset point when no reachable floor is
+   visible.
+5. Returns the resolved waypoint.
 
 ### 3. Benchmark integration
 
@@ -137,12 +149,13 @@ final_waypoint = resolve_reachable_floor_waypoint(...)
 
 ## Requirements
 
-1. The final PointNav target is the resolved reachable floor point.
+1. The final PointNav target is the resolved floor point or the offset fallback.
 2. Traversability is computed from the current depth observation.
-3. A missing reachable floor result produces an invalid waypoint and a
-   replan request.
+3. A missing reachable floor result produces a 0.1m offset fallback waypoint.
+4. A missing offset direction produces an invalid waypoint and a replan request.
 
 ## First Success Criterion
 
 The first implementation is successful when object-surface anchors are replaced
-by reachable floor waypoints before PointNav receives the goal.
+by a reachable floor waypoint or offset fallback before PointNav receives the
+goal.

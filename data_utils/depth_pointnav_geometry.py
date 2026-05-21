@@ -12,6 +12,8 @@ class DepthWaypoint:
     world_position: Optional[np.ndarray]
     valid: bool
     failure_reason: Optional[str] = None
+    raw_world_position: Optional[np.ndarray] = None
+    target_kind: str = "raw_depth"
 
 
 @dataclass
@@ -29,6 +31,24 @@ def extract_waypoint_pixel_from_mask(goal_mask: np.ndarray) -> Optional[Tuple[in
     ys, xs = np.where(mask > 0)
     if len(xs) == 0:
         return None
+    return int(round(float(xs.mean()))), int(round(float(ys.mean())))
+
+
+def extract_anchor_pixel_from_mask(goal_mask: np.ndarray) -> Optional[Tuple[int, int]]:
+    if goal_mask is None:
+        return None
+    mask = np.asarray(goal_mask)
+    if mask.ndim == 3:
+        mask = mask[:, :, 0]
+    ys, xs = np.where(mask > 0)
+    if len(xs) == 0:
+        return None
+
+    bottom_y = int(ys.max())
+    band_height = max(2, int(round(mask.shape[0] * 0.03)))
+    bottom_band = ys >= bottom_y - band_height
+    if np.any(bottom_band):
+        return int(round(float(xs[bottom_band].mean()))), int(round(float(ys[bottom_band].mean())))
     return int(round(float(xs.mean()))), int(round(float(ys.mean())))
 
 
@@ -94,6 +114,20 @@ def _pixel_to_camera_point(
     return np.array([depth_value, -x_image, -y_image], dtype=np.float32)
 
 
+def pixel_to_world_point(
+    pixel: Tuple[int, int],
+    depth_value: float,
+    camera_intrinsics: np.ndarray,
+    camera_position: np.ndarray,
+    camera_rotation: np.ndarray,
+    image_height: int,
+) -> np.ndarray:
+    point_camera = _pixel_to_camera_point(pixel, depth_value, camera_intrinsics, image_height)
+    rotation = np.asarray(camera_rotation, dtype=np.float32)
+    position = np.asarray(camera_position, dtype=np.float32)
+    return (rotation @ point_camera + position).astype(np.float32)
+
+
 def build_depth_waypoint_from_pixel(
     pixel: Tuple[int, int],
     depth_metric: np.ndarray,
@@ -109,10 +143,14 @@ def build_depth_waypoint_from_pixel(
     if depth_value is None:
         return DepthWaypoint(u, v, None, None, False, "no_valid_depth")
 
-    point_camera = _pixel_to_camera_point(pixel, depth_value, camera_intrinsics, depth.shape[0])
-    rotation = np.asarray(camera_rotation, dtype=np.float32)
-    position = np.asarray(camera_position, dtype=np.float32)
-    point_world = rotation @ point_camera + position
+    point_world = pixel_to_world_point(
+        pixel,
+        depth_value,
+        camera_intrinsics,
+        camera_position,
+        camera_rotation,
+        depth.shape[0],
+    )
     return DepthWaypoint(u, v, depth_value, point_world.astype(np.float32), True)
 
 
