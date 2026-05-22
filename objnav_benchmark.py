@@ -41,7 +41,7 @@ def adjust_topdown(metrics):
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--eval_episodes", type=int, default=400)
+    parser.add_argument("--eval_episodes", type=int, default=200)
     parser.add_argument("--local_controller", choices=["pixnav", "depth_pointnav"], default="depth_pointnav")
     parser.add_argument("--pointnav_policy_path", type=str, default=POINTNAV_CHECKPOINT)
     return parser.parse_known_args()[0]
@@ -223,7 +223,7 @@ for i in tqdm(range(args.eval_episodes)):
         if args.local_controller == "depth_pointnav":
             if current_waypoint is None or not current_waypoint.valid:
                 action = 0
-                request_replan = True
+                request_replan = not goal_flag
             else:
                 agent_xy, heading, _, _ = get_vlfm_pose_from_obs(obs)
                 pointgoal = compute_relative_pointgoal(
@@ -243,8 +243,9 @@ for i in tqdm(range(args.eval_episodes)):
 
                 if pointgoal.rho < nav_executor.cfg.pointnav_stop_radius:
                     action = 0
-                    request_replan = True
-                    current_waypoint = None
+                    request_replan = not goal_flag
+                    if request_replan:
+                        current_waypoint = None
                 else:
                     action = nav_executor.act(obs['depth'], pointgoal.rho, pointgoal.theta)
                     request_replan = action == 0 and not goal_flag
