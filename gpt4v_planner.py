@@ -160,7 +160,7 @@ class GPT4V_Planner:
 
         # 3) priors-기반 웨이포인트 선택을 apply_priors_on_image로 통일
         #    - 이 함수가 YOLOE 박스 → priors 스코어링 → 바닥 폴백까지 수행
-        goal_image_rgb, debug_mask, pri_flag, bb_obj_detected, vis_rgb = self.apply_priors_on_image(direction_image, MIN_TARGET_CONF=0.10, MIN_TARGET_AREA=0.0625)
+        goal_image_rgb, debug_mask, pri_flag, bb_obj_detected, vis_rgb = self.apply_priors_on_image(direction_image, MIN_TARGET_CONF=0.10, MIN_TARGET_AREA=0.01)
 
         obj_detected = vlm_obj_detected and bb_obj_detected
         

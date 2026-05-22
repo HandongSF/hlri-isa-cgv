@@ -141,7 +141,13 @@ def build_depth_waypoint_from_pixel(
     u, v = pixel
     depth_value = lookup_valid_depth(depth, pixel, min_depth, max_depth)
     if depth_value is None:
-        return DepthWaypoint(u, v, None, None, False, "no_valid_depth")
+        height, width = depth.shape
+        if u < 0 or u >= width or v < 0 or v >= height:
+            return DepthWaypoint(u, v, None, None, False, "pixel_out_of_bounds")
+        depth_value = float(max_depth)
+        target_kind = "max_depth_fallback"
+    else:
+        target_kind = "raw_depth"
 
     point_world = pixel_to_world_point(
         pixel,
@@ -151,7 +157,14 @@ def build_depth_waypoint_from_pixel(
         camera_rotation,
         depth.shape[0],
     )
-    return DepthWaypoint(u, v, depth_value, point_world.astype(np.float32), True)
+    return DepthWaypoint(
+        u,
+        v,
+        depth_value,
+        point_world.astype(np.float32),
+        True,
+        target_kind=target_kind,
+    )
 
 
 def rotation_matrix(angle: float) -> np.ndarray:
