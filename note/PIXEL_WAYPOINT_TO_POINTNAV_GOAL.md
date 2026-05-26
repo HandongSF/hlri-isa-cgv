@@ -288,6 +288,27 @@ theta > 0 -> 왼쪽
 theta < 0 -> 오른쪽
 ```
 
+현재 구현에서 이 pose source는 Habitat GPS/Compass이다.
+
+```text
+GPS     -> 시뮬레이터 좌표계에서의 agent 위치
+Compass -> 시뮬레이터 좌표계에서의 agent heading
+```
+
+GPS/Compass는 두 군데에서 쓰인다.
+
+```text
+1. waypoint를 처음 만들 때:
+   현재 camera pose를 구성하고, camera 좌표계의 3D target point를 world 좌표계로 변환한다.
+
+2. PointNav를 실행하는 매 step:
+   현재 agent pose를 다시 읽고, final world waypoint를 현재 agent-local 좌표로 변환한다.
+```
+
+실제 로봇이나 GPS/Compass가 없는 환경에서는 이 pose source를 VO/VIO/SLAM pose로
+바꿀 수 있다. 이 경우에도 알고리즘 구조는 동일하다. 필요한 것은 매 step
+`position + heading`을 같은 좌표계에서 제공하는 pose estimate이다.
+
 ## 8. PointNav Policy Input
 
 `DepthPointNavController.act()`는 다음 observation을 PointNav policy에 넣는다.
@@ -332,7 +353,7 @@ rho < 0.9m -> PointNav를 부르지 않고 stop action 0
 6. invalid이면 주변 5x5 valid depth의 median을 사용한다.
 7. 그래도 없으면 d = 5.0m를 사용한다.
 8. pixel (u, v)와 metric depth d를 camera 좌표계의 3D target point로 back-project한다.
-9. 현재 camera pose를 이용해 이 3D target point를 world 좌표계로 변환한다.
+9. 현재 gps/compass pose로 camera pose를 구성하고, 이 3D target point를 world 좌표계로 변환한다.
 10. 변환된 world target point를 agent 방향으로 0.10m 당겨 final world waypoint를 만든다.
 11. 매 step final world waypoint를 현재 gps/compass pose 기준 local coordinate로 변환한다.
 12. local coordinate를 polar coordinate (rho, theta)로 바꾼다.
@@ -342,3 +363,5 @@ rho < 0.9m -> PointNav를 부르지 않고 stop action 0
 여기서 depth `d`는 geometry 계산을 위한 metric depth이고, PointNav policy에
 입력되는 depth image는 Habitat에서 받은 normalized depth이다. final waypoint는
 world 좌표에 고정되며, `(rho, theta)`는 매 step 현재 pose 기준으로 다시 계산된다.
+현재 구현의 pose source는 Habitat GPS/Compass지만, 같은 역할을 하는 VO/VIO/SLAM
+pose로 대체할 수 있다.
