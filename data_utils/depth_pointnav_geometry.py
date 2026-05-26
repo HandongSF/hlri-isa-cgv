@@ -82,10 +82,10 @@ def lookup_valid_depth(
         return None
 
     def _valid(values: np.ndarray) -> np.ndarray:
-        return values[np.isfinite(values) & (values >= min_depth) & (values < max_depth)]
+        return values[np.isfinite(values) & (values > min_depth) & (values < max_depth)]
 
     center = depth[v, u]
-    if np.isfinite(center) and min_depth <= float(center) < max_depth:
+    if np.isfinite(center) and min_depth < float(center) < max_depth:
         return float(center)
 
     radius = max(0, int(window) // 2)
