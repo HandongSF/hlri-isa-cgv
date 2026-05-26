@@ -331,10 +331,14 @@ rho < 0.9m -> PointNav를 부르지 않고 stop action 0
 5. (u, v)의 depth가 0.5 <= d < 5.0이면 사용한다.
 6. invalid이면 주변 5x5 valid depth의 median을 사용한다.
 7. 그래도 없으면 d = 5.0m를 사용한다.
-8. pixel (u, v)와 depth d를 camera 3D point로 back-project한다.
-9. camera pose를 이용해 world anchor로 변환한다.
-10. raw anchor를 agent 방향으로 0.10m 당겨 final waypoint를 만든다.
-11. 매 step final waypoint를 현재 pose 기준 local coordinate로 변환한다.
+8. pixel (u, v)와 metric depth d를 camera 3D point로 back-project한다.
+9. 현재 camera pose를 이용해 camera 3D point를 world anchor로 변환한다.
+10. raw world anchor를 agent 방향으로 0.10m 당겨 final world waypoint를 만든다.
+11. 매 step final world waypoint를 현재 gps/compass pose 기준 local coordinate로 변환한다.
 12. local coordinate를 polar coordinate (rho, theta)로 바꾼다.
 13. normalized depth와 (rho, theta)를 PointNav policy에 입력한다.
 ```
+
+여기서 depth `d`는 geometry 계산을 위한 metric depth이고, PointNav policy에
+입력되는 depth image는 Habitat에서 받은 normalized depth이다. final waypoint는
+world 좌표에 고정되며, `(rho, theta)`는 매 step 현재 pose 기준으로 다시 계산된다.
