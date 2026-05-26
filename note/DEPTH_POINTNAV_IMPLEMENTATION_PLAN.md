@@ -231,7 +231,7 @@ Implementation:
 
 - Input is metric depth in meters, not normalized Habitat depth.
 - Read depth at `(u, v)`.
-- Valid depth must be finite and `min_depth < d < max_depth`.
+- Valid depth must be finite and `min_depth <= d < max_depth`.
 - If invalid, search a local window and return the median valid depth.
 - Return `None` if no valid depth exists.
 
