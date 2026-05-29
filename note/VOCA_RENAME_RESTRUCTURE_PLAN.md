@@ -34,7 +34,7 @@ hlri-isa-cgv/
   vlm_planner.py
   objnav_benchmark.py
   metrics_summary.py
-  depth_pointnav_controller.py
+  voca/navigation/pointnav/controller.py
   cv_utils/
     yoloe_detector.py
   data_utils/
@@ -88,7 +88,7 @@ Apply these renames first, then fix imports.
 | `llm_utils/gpt_request_gemini.py` | `llm_utils/gemini_request.py` | Backend-specific request module. |
 | `llm_utils/gpt_request_ollama.py` | `llm_utils/ollama_request.py` | Backend-specific request module. |
 | `llm_utils/navigation_prompts.py` | `llm_utils/navigation_prompts.py` | Clearer prompt module name. |
-| `depth_pointnav_controller.py` | `pointnav_controller.py` or `controllers/depth_pointnav.py` | Keep as `depth_pointnav_controller.py` for first pass if minimizing import churn. |
+| `depth_pointnav_controller.py` | `voca/navigation/pointnav/controller.py` | Moved so ObjectNav imports a VOCA-owned navigation package. |
 
 Keep these names for now:
 
@@ -206,7 +206,7 @@ hlri-isa-cgv/
   vlm_planner.py
   objnav_benchmark.py
   metrics_summary.py
-  depth_pointnav_controller.py
+  voca/navigation/pointnav/controller.py
   cv_utils/
     yoloe_detector.py
   data_utils/
@@ -287,7 +287,7 @@ Do not jump directly to this structure until the first-pass rename is tested.
    - `GPT4V` where it means the planner abstraction
 6. Run a syntax/import smoke test.
 7. Run a minimal benchmark command with a small episode count.
-8. Only after that, consider the package-style `voca/` refactor.
+8. Package-style `voca/` refactor has started with `voca/navigation/pointnav`. Continue moving modules only after smoke tests stay stable.
 
 ## Smoke Tests
 
@@ -299,7 +299,7 @@ python - <<'PY'
 from settings import POINTNAV_CHECKPOINT
 from habitat_config import hm3d_config
 from vlm_planner import VLMPlanner
-from depth_pointnav_controller import DepthPointNavController
+from voca.navigation.pointnav import DepthPointNavController
 print("VOCA import smoke test passed")
 PY
 ```
@@ -317,15 +317,13 @@ python objnav_benchmark.py --eval_episodes 1
   headers and avoid blending it into VOCA-owned modules.
 - Renaming `GPT4V_Planner` immediately can break old scripts. Use a compatibility alias
   for one transition commit.
-- Moving to a `voca/` package changes import behavior. Do it only after the simple
-  file rename pass is stable.
+- Moving modules into the `voca/` package changes import behavior. Keep each move small and run smoke tests before continuing.
 
 ## Open Decisions
 
 - Should the repository directory itself become `/home/gunminy/VOCA`, replacing the
   current reference repository, or should `hlri-isa-cgv` remain the working copy until
   the cleanup is complete?
-- Should `depth_pointnav_controller.py` stay at the root for compatibility, or move
-  into a new `controllers/` directory now?
+- `voca/navigation/pointnav/controller.py` is the current home for the depth PointNav controller. Keep `third_party` access behind this package.
 - Should old `gpt_request.py` remain as a provider router, or be renamed to a neutral
   `llm_request.py` module?

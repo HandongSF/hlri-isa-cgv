@@ -104,7 +104,7 @@ Use these decisions for the first implementation.
 2. New VOCA files
 
    ```text
-   depth_pointnav_controller.py
+   voca/navigation/pointnav/controller.py
    data_utils/depth_pointnav_geometry.py
    third_party/vlfm_pointnav/...
    ```

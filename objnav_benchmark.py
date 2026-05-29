@@ -20,7 +20,7 @@ import time
 from tqdm import tqdm
 from habitat_config import hm3d_config
 from vlm_planner import VLMPlanner
-from depth_pointnav_controller import DepthPointNavConfig, DepthPointNavController
+from voca.navigation.pointnav import DepthPointNavConfig, DepthPointNavController
 from data_utils.geometry import habitat_camera_intrinsic
 from data_utils.depth_pointnav_geometry import (
     build_depth_waypoint_from_pixel,

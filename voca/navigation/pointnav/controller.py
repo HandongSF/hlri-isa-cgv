@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from third_party.vlfm_pointnav.pointnav_policy import WrappedPointNavResNetPolicy
+from .policy import PointNavPolicy
 from settings import POINTNAV_CHECKPOINT
 
 
@@ -57,7 +57,7 @@ class DepthPointNavController:
         self.cfg = cfg
         self.device = torch.device(cfg.device)
         self.depth_image_shape = _shape_tuple(cfg.depth_image_shape)
-        self.policy = WrappedPointNavResNetPolicy(cfg.pointnav_policy_path, device=self.device)
+        self.policy = PointNavPolicy(cfg.pointnav_policy_path, device=self.device)
         self._has_acted = False
         self._steps_for_waypoint = 0
 
