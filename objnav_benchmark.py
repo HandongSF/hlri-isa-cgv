@@ -75,7 +75,7 @@ depth_sensor_cfg = habitat_config.habitat.simulator.agents.main_agent.sim_sensor
 min_depth = float(depth_sensor_cfg.min_depth)
 max_depth = float(depth_sensor_cfg.max_depth)
 camera_height = float(habitat_config.habitat.simulator.agents.main_agent.sim_sensors.rgb_sensor.position[1])
-print("local_controller =", "depth_pointnav")
+print("controller      =", "depth_pointnav")
 print("task_actions     =", habitat_config.habitat.task.actions)
 
 DETECT_OBJECTS = ['bed', 'sofa', 'chair', 'plant', 'tv', 'toilet', 'floor']
