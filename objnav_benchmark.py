@@ -41,7 +41,7 @@ def adjust_topdown(metrics):
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--eval_episodes", type=int, default=200)
+    parser.add_argument("--eval_episodes", type=int, default=400)
     parser.add_argument("--local_controller", choices=["pixnav", "depth_pointnav"], default="depth_pointnav")
     parser.add_argument("--pointnav_policy_path", type=str, default=POINTNAV_CHECKPOINT)
     return parser.parse_known_args()[0]
