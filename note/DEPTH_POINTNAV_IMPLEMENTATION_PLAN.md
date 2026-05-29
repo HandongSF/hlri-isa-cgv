@@ -498,4 +498,4 @@ replan_triggered
 - Rotating in place changes recomputed theta consistently.
 - During forward motion toward a valid waypoint, `rho` decreases.
 - PointNav action IDs match VOCA/Habitat action IDs.
-- PixNav path still works when `local_controller.name == pixnav`.
+- Depth PointNav is the only ObjectNav controller path.

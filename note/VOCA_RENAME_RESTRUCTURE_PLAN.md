@@ -326,7 +326,7 @@ PY
 Then run a tiny evaluation:
 
 ```bash
-python objnav_benchmark.py --eval_episodes 1 --local_controller depth_pointnav
+python objnav_benchmark.py --eval_episodes 1
 ```
 
 ## Risks
