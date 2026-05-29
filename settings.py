@@ -50,3 +50,6 @@ SAM_CHECKPOINT_PATH = _path_from_env("VOCA_SAM_CHECKPOINT", Path(CHECKPOINT_DIR)
 POLICY_CHECKPOINT = _path_from_env("VOCA_POLICY_CHECKPOINT", Path(CHECKPOINT_DIR) / "pixelnav_A.ckpt")
 POINTNAV_CHECKPOINT = _path_from_env("VOCA_POINTNAV_CHECKPOINT", Path(CHECKPOINT_DIR) / "pointnav_weights.pth")
 YOLOE_CHECKPOINT_PATH = _path_from_env("VOCA_YOLOE_CHECKPOINT", Path(CHECKPOINT_DIR) / "yoloe-11l-seg.pt")
+
+# LLM/VLM backend. Supported values: gemini, ollama.
+LLM_BACKEND = os.getenv("VOCA_LLM_BACKEND", "gemini").lower()

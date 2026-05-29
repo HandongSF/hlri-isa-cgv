@@ -1,4 +1,4 @@
-GPT4V_PROMPT = "You are a wheeled mobile robot working in an indoor environment. \
+VLM_PROMPT = "You are a wheeled mobile robot working in an indoor environment. \
 Your task is finding a certain type of objects as soon as possible.\
 For efficient exploration, you should based on your observation to decide a best searching direction.\
 And you will be provided with the following elements:\

@@ -10,7 +10,7 @@ import open3d as o3d
 from tqdm import tqdm
 from PIL import Image
 from habitat.tasks.nav.shortest_path_follower import ShortestPathFollower
-from policy_agent import Policy_Agent
+from policy_agent import PolicyAgent
 from data_utils.geometry import *
 from habitat_config import *
 from settings import *
@@ -102,7 +102,7 @@ elif args.prefix == 'hm3d':
                                  turn_angle=args.turn_angle)
 
 env = habitat.Env(habitat_config)
-policy_agent = Policy_Agent(model_path=POLICY_CHECKPOINT)
+policy_agent = PolicyAgent(model_path=POLICY_CHECKPOINT)
 oracle_agent = ShortestPathFollower(env.sim,0.5,False)
 metrics_sr = {'easy':[],'medium':[],'hard':[]}
 metrics_spl = {'easy':[],'medium':[],'hard':[]}

@@ -1,6 +1,14 @@
 import numpy as np
-from llm_utils.gpt_request import gptv_response, gpt_response
-from llm_utils.navigation_prompts import GPT4V_PROMPT, PRIORS_PROMPT, PRIOR_CLASS_LIST
+from settings import LLM_BACKEND
+
+if LLM_BACKEND == "gemini":
+    from llm_utils.gemini_request import text_response, vision_response
+elif LLM_BACKEND == "ollama":
+    from llm_utils.ollama_request import text_response, vision_response
+else:
+    raise ValueError("Unsupported VOCA_LLM_BACKEND: {}".format(LLM_BACKEND))
+
+from llm_utils.navigation_prompts import VLM_PROMPT, PRIORS_PROMPT, PRIOR_CLASS_LIST
 from llm_utils.priors_parser import parse_llm_json, extract_priors, parse_decision_json, dedupe_preserve_order, parse_prior_class_block
 from cv_utils.yoloe_detector import *
 from typing import List, Dict, Any, Tuple, Optional, Union
@@ -14,7 +22,7 @@ import math
 
 class VLMPlanner:
     def __init__(self,yoloe_model):
-        self.gptv_trajectory = []
+        self.vlm_trajectory = []
         self.yoloe_model = yoloe_model
         self.detect_objects = ['bed','sofa','chair','houseplant','tv monitor','toilet']
         # ---- LLM/플래너/모듈별 시간 계측 저장소 ----
@@ -83,7 +91,7 @@ class VLMPlanner:
         else:
             self.object_goal = object_goal
 
-        self.gptv_trajectory = []
+        self.vlm_trajectory = []
         self.panoramic_trajectory = []
         self.direction_image_trajectory = []
         self.direction_mask_trajectory = []
@@ -152,7 +160,7 @@ class VLMPlanner:
         _plan_t0 = time.perf_counter()
 
         # 1) LLM로 진행 방향/priors 결정
-        direction, vlm_obj_detected = self.query_gpt4v(pano_images)
+        direction, vlm_obj_detected = self.query_vlm(pano_images)
         direction_image = pano_images[direction]  # RGB
 
         # 2) YOLOE 클래스 프롬프트 보장 (priors 반영)
@@ -233,7 +241,7 @@ class VLMPlanner:
         """
         text_content = "<Target Object>:{}\n".format(self.object_goal)
         # (선택) 트래젝토리 로그에 입력 기록
-        self.gptv_trajectory.append("\nInput(priors):\n%s \n" % text_content)
+        self.vlm_trajectory.append("\nInput(priors):\n%s \n" % text_content)
 
         raw_answer = None
         priors = None
@@ -243,7 +251,7 @@ class VLMPlanner:
             t0 = time.perf_counter()
             try:
                 # 이미지 없이 텍스트 전용 호출
-                raw_answer = gpt_response(text_content + PRIOR_CLASS_LIST, system_prompt=PRIORS_PROMPT)
+                raw_answer = text_response(text_content + PRIOR_CLASS_LIST, system_prompt=PRIORS_PROMPT)
                 if raw_answer:
                     self.llm_success_count += 1
             except Exception as e:
@@ -308,12 +316,12 @@ class VLMPlanner:
         self._set_prompt_from_priors(priors)
 
         # (선택) 응답 원문도 트래젝토리에 남김
-        self.gptv_trajectory.append("PRIORS Answer:\n%s" % (raw_answer if raw_answer is not None else "<EMPTY>"))
+        self.vlm_trajectory.append("PRIORS Answer:\n%s" % (raw_answer if raw_answer is not None else "<EMPTY>"))
 
         return priors
 
 
-    def query_gpt4v(self, pano_images):
+    def query_vlm(self, pano_images):
         """
         LLM에서 Reason/Angle/Flag만 받아와 진행 방향을 정한다.
         priors는 사용/저장하지 않는다.
@@ -325,7 +333,7 @@ class VLMPlanner:
         cv2.imwrite("monitor-panoramic.jpg", inference_image)
 
         text_content = "<Target Object>:{}\n".format(self.object_goal)
-        self.gptv_trajectory.append("\nInput:\n%s \n" % text_content)
+        self.vlm_trajectory.append("\nInput:\n%s \n" % text_content)
         self.panoramic_trajectory.append(inference_image)
 
         raw_answer = None
@@ -346,8 +354,8 @@ class VLMPlanner:
             print("[LLM/VLM] try {}/10".format(try_idx + 1))
             t0 = time.perf_counter()
             try:
-                # GPT4V_PROMPT는 시스템 프롬프트로 들어간다고 가정
-                raw_answer = gptv_response(text_content, inference_image, GPT4V_PROMPT)
+                # VLM_PROMPT는 시스템 프롬프트로 들어간다고 가정
+                raw_answer = vision_response(text_content, inference_image, VLM_PROMPT)
                 if raw_answer:
                     self.llm_success_count += 1
             except Exception as e:
@@ -401,7 +409,7 @@ class VLMPlanner:
                 print("[LLM] reason:", reason)
             break  # 성공
 
-        self.gptv_trajectory.append("GPT-4V Answer:\n%s" % (raw_answer if raw_answer is not None else "<EMPTY>"))
+        self.vlm_trajectory.append("VLM Answer:\n%s" % (raw_answer if raw_answer is not None else "<EMPTY>"))
         self.panoramic_trajectory.append(inference_image)
 
         try:
@@ -811,6 +819,3 @@ class VLMPlanner:
         detail["reason"] = "ok" if similar else "low match ratio"
 
         return (similar, detail) if return_detail else similar
-
-
-GPT4V_Planner = VLMPlanner

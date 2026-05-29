@@ -58,7 +58,7 @@ def local_image_to_data_url(image):
     else:
         raise ValueError("image must be a file path (str) or a numpy.ndarray")
 
-def gptv_response(text_prompt, image_prompt, system_prompt=""):
+def vision_response(text_prompt, image_prompt, system_prompt=""):
     # Ollama 멀티모달(예: llama3.2-vision, llava 등)은 /api/chat에서 images=[base64] 형태 지원
     data_url = local_image_to_data_url(image_prompt)
     # data URL에서 base64 본문만 추출
@@ -71,7 +71,7 @@ def gptv_response(text_prompt, image_prompt, system_prompt=""):
 
     return _ollama_chat(messages, VISION_MODEL, num_predict=1000)
 
-def gpt_response(text_prompt, system_prompt=""):
+def text_response(text_prompt, system_prompt=""):
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})

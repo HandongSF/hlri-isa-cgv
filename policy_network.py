@@ -12,7 +12,7 @@ def generate_square_subsequent_mask(sz: int):
     mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
     return mask
 
-class PixelNav_Policy(nn.Module):
+class PixelNavPolicy(nn.Module):
     def __init__(self,max_token_length=64,device=DEFAULT_DEVICE):
         super().__init__()
         self.device = device
