@@ -1,4 +1,4 @@
-# cv_utils/yoloe_detector.py
+# voca/perception/yoloe_detector.py
 
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -182,7 +182,7 @@ def yoloe_detection(
         class_names=target_classes,
     )
 
-# 파일: cv_utils/yoloe_detector.py
+# 파일: voca/perception/yoloe_detector.py
 
 from typing import Dict
 

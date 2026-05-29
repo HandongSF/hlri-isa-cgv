@@ -10,7 +10,7 @@ else:
 
 from voca.llm.navigation_prompts import VLM_PROMPT, PRIORS_PROMPT, PRIOR_CLASS_LIST
 from voca.llm.priors_parser import parse_llm_json, extract_priors, parse_decision_json, dedupe_preserve_order, parse_prior_class_block
-from cv_utils.yoloe_detector import *
+from voca.perception.yoloe_detector import *
 from typing import List, Dict, Any, Tuple, Optional, Union
 import cv2
 import time  # <-- 추가
