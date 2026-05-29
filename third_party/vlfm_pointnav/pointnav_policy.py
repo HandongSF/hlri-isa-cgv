@@ -1,5 +1,6 @@
 # Copyright (c) 2023 Boston Dynamics AI Institute LLC. All rights reserved.
 
+from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, Dict, Tuple, Union
 import sys
@@ -130,6 +131,41 @@ class WrappedPointNavResNetPolicy:
         self.pointnav_prev_actions = torch.zeros_like(self.pointnav_prev_actions)
 
 
+def _install_vlfm_checkpoint_shims() -> None:
+    if "vlfm.obs_transformers.resize" in sys.modules:
+        return
+
+    try:
+        from habitat_baselines.config.default_structured_configs import ObsTransformConfig
+    except ModuleNotFoundError:
+        _install_habitat_baselines_config_shims()
+        from habitat_baselines.config.default_structured_configs import ObsTransformConfig
+
+    @dataclass
+    class ResizeConfig(ObsTransformConfig):  # type: ignore[misc, valid-type]
+        type: str = "Resize"
+        size: Tuple[int, int] = (224, 224)
+        channels_last: bool = True
+        trans_keys: Tuple[str, ...] = (
+            "rgb",
+            "depth",
+            "semantic",
+        )
+        semantic_key: str = "semantic"
+
+    vlfm_module = sys.modules.setdefault("vlfm", ModuleType("vlfm"))
+    obs_module = sys.modules.setdefault(
+        "vlfm.obs_transformers",
+        ModuleType("vlfm.obs_transformers"),
+    )
+    resize_module = ModuleType("vlfm.obs_transformers.resize")
+    ResizeConfig.__module__ = "vlfm.obs_transformers.resize"
+    resize_module.ResizeConfig = ResizeConfig
+    obs_module.resize = resize_module
+    vlfm_module.obs_transformers = obs_module
+    sys.modules["vlfm.obs_transformers.resize"] = resize_module
+
+
 def load_pointnav_policy(file_path: str) -> PointNavResNetTensorOutputPolicy:
     """Loads a PointNavResNetPolicy policy from a .pth file.
 
@@ -138,6 +174,8 @@ def load_pointnav_policy(file_path: str) -> PointNavResNetTensorOutputPolicy:
     Returns:
         PointNavResNetTensorOutputPolicy: The policy.
     """
+    _install_vlfm_checkpoint_shims()
+
     if HABITAT_BASELINES_AVAILABLE:
         obs_space = SpaceDict(
             {

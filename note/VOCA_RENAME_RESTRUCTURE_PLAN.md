@@ -165,7 +165,7 @@ third_party/vlfm_pointnav/
 Recommended first-pass decision:
 
 - Keep `third_party/vlfm_pointnav/` in place for now.
-- Remove `vlfm/obs_transformers/resize.py`; no active code or config references it.
+- Install a loader-local `vlfm.obs_transformers.resize` shim in `third_party/vlfm_pointnav/pointnav_policy.py` because `pointnav_weights.pth` unpickles serialized VLFM config paths during `torch.load`.
 - Add a VOCA-facing wrapper module later, for example:
 
 ```text
@@ -314,7 +314,7 @@ python objnav_benchmark.py --eval_episodes 1
 
 ## Risks
 
-- `vlfm/obs_transformers/resize.py` was removed after checking that no active code or config references it.
+- `vlfm.obs_transformers.resize` is installed dynamically by the vendored PointNav loader as a checkpoint compatibility shim; do not add a root `vlfm/` package for VOCA application code.
 - `third_party/vlfm_pointnav` contains adapted external code. Keep license/copyright
   headers and avoid blending it into VOCA-owned modules.
 - Renaming `GPT4V_Planner` immediately can break old scripts. Use a compatibility alias
