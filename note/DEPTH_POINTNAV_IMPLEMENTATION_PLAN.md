@@ -105,7 +105,7 @@ Use these decisions for the first implementation.
 
    ```text
    voca/navigation/pointnav/controller.py
-   data_utils/depth_pointnav_geometry.py
+   voca/navigation/pointnav/geometry.py
    third_party/vlfm_pointnav/...
    ```
 

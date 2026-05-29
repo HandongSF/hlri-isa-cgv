@@ -34,13 +34,17 @@ hlri-isa-cgv/
   vlm_planner.py
   objnav_benchmark.py
   metrics_summary.py
-  voca/navigation/pointnav/controller.py
+  voca/
+    navigation/
+      pointnav/
+        controller.py
+        geometry.py
+      waypoint/
+        reachable.py
   cv_utils/
     yoloe_detector.py
   data_utils/
     geometry.py
-    depth_pointnav_geometry.py
-    reachable_waypoint.py
   llm_utils/
     gpt_request.py
     gpt_request_gemini.py
@@ -89,6 +93,8 @@ Apply these renames first, then fix imports.
 | `llm_utils/gpt_request_ollama.py` | `llm_utils/ollama_request.py` | Backend-specific request module. |
 | `llm_utils/navigation_prompts.py` | `llm_utils/navigation_prompts.py` | Clearer prompt module name. |
 | `depth_pointnav_controller.py` | `voca/navigation/pointnav/controller.py` | Moved so ObjectNav imports a VOCA-owned navigation package. |
+| `data_utils/depth_pointnav_geometry.py` | `voca/navigation/pointnav/geometry.py` | Moved under VOCA navigation because it is PointNav-specific geometry. |
+| `data_utils/reachable_waypoint.py` | `voca/navigation/waypoint/reachable.py` | Moved under VOCA navigation because it resolves navigation waypoints. |
 
 Keep these names for now:
 
@@ -99,8 +105,6 @@ Keep these names for now:
 | `metrics_summary.py` | Keep. |
 | `policy_agent.py` | Removed. Legacy PixelNav executor is no longer used by ObjectNav. |
 | `policy_network.py` | Removed. Legacy PixelNav network is no longer used by ObjectNav. |
-| `data_utils/depth_pointnav_geometry.py` | Keep. This is new functionality not present in `/home/gunminy/VOCA`. |
-| `data_utils/reachable_waypoint.py` | Keep. This is new functionality not present in `/home/gunminy/VOCA`. |
 
 ## Import Updates Required
 
@@ -206,13 +210,17 @@ hlri-isa-cgv/
   vlm_planner.py
   objnav_benchmark.py
   metrics_summary.py
-  voca/navigation/pointnav/controller.py
+  voca/
+    navigation/
+      pointnav/
+        controller.py
+        geometry.py
+      waypoint/
+        reachable.py
   cv_utils/
     yoloe_detector.py
   data_utils/
     geometry.py
-    depth_pointnav_geometry.py
-    reachable_waypoint.py
   llm_utils/
     gemini_request.py
     ollama_request.py
@@ -250,7 +258,9 @@ VOCA/
     geometry/
       camera.py
       depth_pointnav.py
-      reachable_waypoint.py
+    navigation/
+      waypoint/
+        reachable.py
     policy/
       pixelnav_agent.py
       pixelnav_network.py

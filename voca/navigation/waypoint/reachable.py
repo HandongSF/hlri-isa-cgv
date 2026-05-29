@@ -2,7 +2,7 @@ from typing import Optional
 
 import numpy as np
 
-from data_utils.depth_pointnav_geometry import DepthWaypoint
+from voca.navigation.pointnav.geometry import DepthWaypoint
 
 
 OFFSET_FALLBACK_M = 0.10

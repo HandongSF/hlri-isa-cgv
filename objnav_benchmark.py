@@ -22,13 +22,13 @@ from habitat_config import hm3d_config
 from vlm_planner import VLMPlanner
 from voca.navigation.pointnav import DepthPointNavConfig, DepthPointNavController
 from data_utils.geometry import habitat_camera_intrinsic
-from data_utils.depth_pointnav_geometry import (
+from voca.navigation.pointnav.geometry import (
     build_depth_waypoint_from_pixel,
     compute_relative_pointgoal,
     extract_anchor_pixel_from_mask,
     restore_metric_depth_from_habitat,
 )
-from data_utils.reachable_waypoint import resolve_reachable_floor_waypoint
+from voca.navigation.waypoint import resolve_reachable_floor_waypoint
 from habitat.utils.visualizations.maps import colorize_draw_agent_and_fit_to_height
 from cv_utils.yoloe_detector import initialize_yoloe_model
 from omegaconf import OmegaConf, open_dict

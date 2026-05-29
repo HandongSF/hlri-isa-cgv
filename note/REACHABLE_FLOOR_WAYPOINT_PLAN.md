@@ -62,7 +62,7 @@ extract_anchor_pixel_from_mask(...)
 Use:
 
 ```text
-data_utils/reachable_waypoint.py
+voca/navigation/waypoint/reachable.py
 ```
 
 Main function:
