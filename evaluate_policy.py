@@ -11,9 +11,9 @@ from tqdm import tqdm
 from PIL import Image
 from habitat.tasks.nav.shortest_path_follower import ShortestPathFollower
 from policy_agent import Policy_Agent
-from data_utils.geometry_tools import *
-from config_utils import *
-from constants import *
+from data_utils.geometry import *
+from habitat_config import *
+from settings import *
 
 os.environ["MAGNUM_LOG"] = "quiet"
 os.environ["HABITAT_SIM_LOG"] = "quiet"

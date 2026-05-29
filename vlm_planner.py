@@ -1,8 +1,8 @@
 import numpy as np
 from llm_utils.gpt_request import gptv_response, gpt_response
-from llm_utils.nav_prompt import GPT4V_PROMPT, PRIORS_PROMPT, PRIOR_CLASS_LIST
+from llm_utils.navigation_prompts import GPT4V_PROMPT, PRIORS_PROMPT, PRIOR_CLASS_LIST
 from llm_utils.priors_parser import parse_llm_json, extract_priors, parse_decision_json, dedupe_preserve_order, parse_prior_class_block
-from cv_utils.yoloe_tools import *
+from cv_utils.yoloe_detector import *
 from typing import List, Dict, Any, Tuple, Optional, Union
 import cv2
 import time  # <-- 추가
@@ -12,7 +12,7 @@ import json # NEW
 import math
 
 
-class GPT4V_Planner:
+class VLMPlanner:
     def __init__(self,yoloe_model):
         self.gptv_trajectory = []
         self.yoloe_model = yoloe_model
@@ -811,3 +811,6 @@ class GPT4V_Planner:
         detail["reason"] = "ok" if similar else "low match ratio"
 
         return (similar, detail) if return_detail else similar
+
+
+GPT4V_Planner = VLMPlanner

@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 
 from third_party.vlfm_pointnav.pointnav_policy import WrappedPointNavResNetPolicy
-from constants import POINTNAV_CHECKPOINT
+from settings import POINTNAV_CHECKPOINT
 
 
 @dataclass

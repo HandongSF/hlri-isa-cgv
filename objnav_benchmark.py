@@ -11,12 +11,12 @@ import imageio
 import numpy as np
 import time
 from tqdm import tqdm
-from constants import *
-from config_utils import hm3d_config
-from gpt4v_planner import GPT4V_Planner
+from settings import *
+from habitat_config import hm3d_config
+from vlm_planner import VLMPlanner
 from policy_agent import Policy_Agent
 from depth_pointnav_controller import DepthPointNavConfig, DepthPointNavController
-from data_utils.geometry_tools import habitat_camera_intrinsic
+from data_utils.geometry import habitat_camera_intrinsic
 from data_utils.depth_pointnav_geometry import (
     build_depth_waypoint_from_pixel,
     compute_relative_pointgoal,
@@ -25,7 +25,7 @@ from data_utils.depth_pointnav_geometry import (
 )
 from data_utils.reachable_waypoint import resolve_reachable_floor_waypoint
 from habitat.utils.visualizations.maps import colorize_draw_agent_and_fit_to_height
-from cv_utils.yoloe_tools import initialize_yoloe_model
+from cv_utils.yoloe_detector import initialize_yoloe_model
 from omegaconf import OmegaConf, open_dict
 
 
@@ -82,9 +82,9 @@ yoloe_model = initialize_yoloe_model(
 )
 
 try:
-    nav_planner = GPT4V_Planner(yoloe_model)
+    nav_planner = VLMPlanner(yoloe_model)
 except TypeError:
-    nav_planner = GPT4V_Planner(yoloe_model, yoloe_model)
+    nav_planner = VLMPlanner(yoloe_model, yoloe_model)
 
 if args.local_controller == "depth_pointnav":
     nav_executor = DepthPointNavController(

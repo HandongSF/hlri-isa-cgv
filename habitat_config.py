@@ -1,7 +1,7 @@
 import habitat
 import os
 import cv2
-from constants import *
+from settings import *
 from habitat.config.read_write import read_write
 from habitat.config.default_structured_configs import (
     CollisionsMeasurementConfig,

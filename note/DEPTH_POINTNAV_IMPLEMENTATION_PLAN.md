@@ -66,7 +66,7 @@ local_controller:
   depth_sensor_normalize_depth: true
 ```
 
-VLFM PointNav uses `Discrete(4)`. Verify the Habitat action ID mapping in FENav before
+VLFM PointNav uses `Discrete(4)`. Verify the Habitat action ID mapping in VOCA before
 running evaluation:
 
 ```text
@@ -85,7 +85,7 @@ Use these decisions for the first implementation.
 1. VLFM PointNav code usage
 
    Do not import VLFM directly from `/home/gunminy/vlfm-main` at runtime. Vendor only the
-   minimal PointNav policy code needed for inference into FENav.
+   minimal PointNav policy code needed for inference into VOCA.
 
    Recommended layout:
 
@@ -101,7 +101,7 @@ Use these decisions for the first implementation.
 
    Keep original VLFM copyright/license headers in vendored files.
 
-2. New FENav files
+2. New VOCA files
 
    ```text
    depth_pointnav_controller.py
@@ -182,7 +182,7 @@ gps_sensor
 compass_sensor
 ```
 
-Add these sensors to the FENav Habitat config for `depth_pointnav` mode. Do not derive
+Add these sensors to the VOCA Habitat config for `depth_pointnav` mode. Do not derive
 heading from simulator quaternion in the first implementation unless the sensor path is
 unavailable.
 
@@ -317,7 +317,7 @@ it:
 "depth": image_resize(nav_depth, depth_image_shape, channels_last=True)
 ```
 
-FENav should do the same for `depth_pointnav` mode.
+VOCA should do the same for `depth_pointnav` mode.
 
 Add:
 
@@ -379,7 +379,7 @@ Behavior:
 - Reset at episode start.
 - Reset on new VLM waypoint for the first implementation.
 - Call policy with `deterministic=True`.
-- Return FENav/Habitat-compatible action ID.
+- Return VOCA/Habitat-compatible action ID.
 
 Internal policy call:
 
@@ -497,5 +497,5 @@ replan_triggered
 - Left/right pixels produce opposite theta signs.
 - Rotating in place changes recomputed theta consistently.
 - During forward motion toward a valid waypoint, `rho` decreases.
-- PointNav action IDs match FENav/Habitat action IDs.
+- PointNav action IDs match VOCA/Habitat action IDs.
 - PixNav path still works when `local_controller.name == pixnav`.

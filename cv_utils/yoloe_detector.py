@@ -1,4 +1,4 @@
-# cv_utils/yoloe_tools.py
+# cv_utils/yoloe_detector.py
 
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import torch
 from ultralytics import YOLOE
-from constants import YOLOE_CHECKPOINT_PATH
+from settings import YOLOE_CHECKPOINT_PATH
 
 
 @dataclass
@@ -59,7 +59,7 @@ def _resolve_weights_path(weights: Optional[str]) -> str:
         f"Tried:\n"
         f"  weights arg: {weights}\n"
         f"  env YOLOE_WEIGHTS: {os.environ.get('YOLOE_WEIGHTS')}\n"
-        f"  constants.YOLOE_CHECKPOINT_PATH: {YOLOE_CHECKPOINT_PATH}\n"
+        f"  settings.YOLOE_CHECKPOINT_PATH: {YOLOE_CHECKPOINT_PATH}\n"
         + hint
     )
 
@@ -182,7 +182,7 @@ def yoloe_detection(
         class_names=target_classes,
     )
 
-# 파일: cv_utils/yoloe_tools.py
+# 파일: cv_utils/yoloe_detector.py
 
 from typing import Dict
 

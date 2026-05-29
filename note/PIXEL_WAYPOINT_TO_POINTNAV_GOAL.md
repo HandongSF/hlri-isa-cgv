@@ -1,6 +1,6 @@
 # Pixel Waypoint to PointNav Goal
 
-이 문서는 현재 FENav `depth_pointnav` 구현에서 pixel waypoint가 PointNav policy의
+이 문서는 현재 VOCA `depth_pointnav` 구현에서 pixel waypoint가 PointNav policy의
 relative goal `(rho, theta)`로 변환되는 실제 알고리즘을 정리한다.
 
 ## Summary
@@ -22,7 +22,7 @@ YOLOE bbox
 
 ## 1. Waypoint Pixel Source
 
-`gpt4v_planner.py`의 `apply_priors_on_image()`는 YOLOE detection을 실행한다.
+`vlm_planner.py`의 `apply_priors_on_image()`는 YOLOE detection을 실행한다.
 현재 호출은 box만 사용한다.
 
 ```python
@@ -75,7 +75,7 @@ v ~= bbox center y + small downward bias
 
 ## 2. Depth Sensor Values
 
-`depth_pointnav` 모드에서는 `config_utils.py`의 `_enable_depth_pointnav_mode()`가
+`depth_pointnav` 모드에서는 `habitat_config.py`의 `_enable_depth_pointnav_mode()`가
 Habitat depth sensor를 다음 값으로 설정한다.
 
 ```python
