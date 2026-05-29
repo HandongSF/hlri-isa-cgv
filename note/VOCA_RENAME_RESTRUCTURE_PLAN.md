@@ -33,10 +33,7 @@ hlri-isa-cgv/
   habitat_config.py
   vlm_planner.py
   objnav_benchmark.py
-  evaluate_policy.py
   metrics_summary.py
-  policy_agent.py
-  policy_network.py
   depth_pointnav_controller.py
   cv_utils/
     yoloe_detector.py
@@ -68,10 +65,7 @@ VOCA/
   habitat_config.py
   vlm_planner.py
   objnav_benchmark.py
-  evaluate_policy.py
   metrics_summary.py
-  policy_agent.py
-  policy_network.py
   cv_utils/
     yoloe_detector.py
   data_utils/
@@ -104,10 +98,10 @@ Keep these names for now:
 | File or directory | Decision |
 | --- | --- |
 | `objnav_benchmark.py` | Keep. This is the main ObjectNav evaluation entry point. |
-| `evaluate_policy.py` | Keep. |
+| `evaluate_policy.py` | Removed. PixelNav evaluation is no longer part of the VOCA ObjectNav code path. |
 | `metrics_summary.py` | Keep. |
-| `policy_agent.py` | Keep for first pass; class rename can come later. |
-| `policy_network.py` | Keep for first pass. |
+| `policy_agent.py` | Removed. Legacy PixelNav executor is no longer used by ObjectNav. |
+| `policy_network.py` | Removed. Legacy PixelNav network is no longer used by ObjectNav. |
 | `data_utils/depth_pointnav_geometry.py` | Keep. This is new functionality not present in `/home/gunminy/VOCA`. |
 | `data_utils/reachable_waypoint.py` | Keep. This is new functionality not present in `/home/gunminy/VOCA`. |
 
@@ -163,10 +157,7 @@ Do this after file renames are stable.
 | Current symbol | Target symbol | Notes |
 | --- | --- | --- |
 | `GPT4V_Planner` | `VLMPlanner` | Main VOCA planner class. |
-| `Policy_Agent` | `PolicyAgent` | Python class naming convention. |
-| `PixelNav_Policy` | `PixelNavPolicy` | Python class naming convention. |
 | `POINTNAV_CHECKPOINT` | `POINTNAV_CHECKPOINT_PATH` | More explicit path name. |
-| `POLICY_CHECKPOINT` | `PIXELNAV_CHECKPOINT_PATH` or `POLICY_CHECKPOINT_PATH` | Pick one and use it everywhere. |
 
 ## Third-Party and VLFM Policy Code
 
@@ -218,10 +209,7 @@ hlri-isa-cgv/
   habitat_config.py
   vlm_planner.py
   objnav_benchmark.py
-  evaluate_policy.py
   metrics_summary.py
-  policy_agent.py
-  policy_network.py
   depth_pointnav_controller.py
   cv_utils/
     yoloe_detector.py

@@ -35,19 +35,8 @@ DATA_ROOT = _path_from_env("VOCA_DATA_ROOT", PROJECT_ROOT / "data")
 SCENE_PREFIX = _dir_from_env("VOCA_SCENE_DATASETS_DIR", Path(DATA_ROOT) / "scene_datasets")
 EPISODE_PREFIX = _dir_from_env("VOCA_DATASETS_DIR", Path(DATA_ROOT) / "datasets")
 
-# Detection, segmentation, and policy checkpoints.
+# Model checkpoints.
 CHECKPOINT_DIR = _path_from_env("VOCA_CHECKPOINT_DIR", PROJECT_ROOT / "checkpoints")
-GROUNDING_DINO_CONFIG_PATH = _path_from_env(
-    "VOCA_GROUNDING_DINO_CONFIG",
-    Path(CHECKPOINT_DIR) / "GroundingDINO_SwinB_cfg.py",
-)
-GROUNDING_DINO_CHECKPOINT_PATH = _path_from_env(
-    "VOCA_GROUNDING_DINO_CHECKPOINT",
-    Path(CHECKPOINT_DIR) / "groundingdino_swinb_cogcoor.pth",
-)
-SAM_ENCODER_VERSION = os.getenv("VOCA_SAM_ENCODER_VERSION", "vit_h")
-SAM_CHECKPOINT_PATH = _path_from_env("VOCA_SAM_CHECKPOINT", Path(CHECKPOINT_DIR) / "sam_vit_h_4b8939.pth")
-POLICY_CHECKPOINT = _path_from_env("VOCA_POLICY_CHECKPOINT", Path(CHECKPOINT_DIR) / "pixelnav_A.ckpt")
 POINTNAV_CHECKPOINT = _path_from_env("VOCA_POINTNAV_CHECKPOINT", Path(CHECKPOINT_DIR) / "pointnav_weights.pth")
 YOLOE_CHECKPOINT_PATH = _path_from_env("VOCA_YOLOE_CHECKPOINT", Path(CHECKPOINT_DIR) / "yoloe-11l-seg.pt")
 
