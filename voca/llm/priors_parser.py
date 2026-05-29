@@ -1,4 +1,4 @@
-# llm_utils/priors_parser.py
+# voca/llm/priors_parser.py
 import json
 import ast
 import re

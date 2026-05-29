@@ -29,12 +29,18 @@ For the first cleanup pass, use the naming and file structure style from
 ```text
 hlri-isa-cgv/
   README.md
-  constants.py
+  settings.py
   habitat_config.py
-  vlm_planner.py
   objnav_benchmark.py
   metrics_summary.py
   voca/
+    planning/
+      vlm_planner.py
+    llm/
+      gemini_request.py
+      ollama_request.py
+      navigation_prompts.py
+      priors_parser.py
     navigation/
       pointnav/
         controller.py
@@ -45,12 +51,6 @@ hlri-isa-cgv/
     yoloe_detector.py
   data_utils/
     geometry.py
-  llm_utils/
-    gpt_request.py
-    gpt_request_gemini.py
-    gpt_request_ollama.py
-    navigation_prompts.py
-    priors_parser.py
   third_party/
     vlfm_pointnav/
   note/
@@ -64,18 +64,12 @@ VOCA/
   REPO_CLEANUP.md
   settings.py
   habitat_config.py
-  vlm_planner.py
   objnav_benchmark.py
   metrics_summary.py
   cv_utils/
     yoloe_detector.py
   data_utils/
     geometry.py
-  llm_utils/
-    gemini_request.py
-    ollama_request.py
-    navigation_prompts.py
-    priors_parser.py
 ```
 
 ## Rename Map
@@ -86,12 +80,13 @@ Apply these renames first, then fix imports.
 | --- | --- | --- |
 | `constants.py` | `settings.py` | Central project settings and environment-variable based paths. |
 | `habitat_config.py` | `habitat_config.py` | Habitat-specific configuration helpers. |
-| `vlm_planner.py` | `vlm_planner.py` | Planner is not necessarily GPT-4V specific; VOCA uses VLM terminology. |
+| `vlm_planner.py` | `voca/planning/vlm_planner.py` | Planner is not necessarily GPT-4V specific; VOCA uses VLM terminology. |
 | `cv_utils/yoloe_detector.py` | `cv_utils/yoloe_detector.py` | More concrete detector module name, matches `/home/gunminy/VOCA`. |
 | `data_utils/geometry.py` | `data_utils/geometry.py` | Shorter reusable geometry module name. |
-| `llm_utils/gpt_request_gemini.py` | `llm_utils/gemini_request.py` | Backend-specific request module. |
-| `llm_utils/gpt_request_ollama.py` | `llm_utils/ollama_request.py` | Backend-specific request module. |
-| `llm_utils/navigation_prompts.py` | `llm_utils/navigation_prompts.py` | Clearer prompt module name. |
+| `llm_utils/gpt_request_gemini.py` | `voca/llm/gemini_request.py` | Backend-specific request module. |
+| `llm_utils/gpt_request_ollama.py` | `voca/llm/ollama_request.py` | Backend-specific request module. |
+| `llm_utils/navigation_prompts.py` | `voca/llm/navigation_prompts.py` | Clearer prompt module name. |
+| `llm_utils/priors_parser.py` | `voca/llm/priors_parser.py` | LLM response parsing belongs with the LLM package. |
 | `depth_pointnav_controller.py` | `voca/navigation/pointnav/controller.py` | Moved so ObjectNav imports a VOCA-owned navigation package. |
 | `data_utils/depth_pointnav_geometry.py` | `voca/navigation/pointnav/geometry.py` | Moved under VOCA navigation because it is PointNav-specific geometry. |
 | `data_utils/reachable_waypoint.py` | `voca/navigation/waypoint/reachable.py` | Moved under VOCA navigation because it resolves navigation waypoints. |
@@ -131,13 +126,13 @@ from habitat_config import hm3d_config
 ```
 
 ```python
-from vlm_planner import GPT4V_Planner
+from vlm_planner import VLMPlanner
 ```
 
 to:
 
 ```python
-from vlm_planner import VLMPlanner
+from voca.planning import VLMPlanner
 ```
 
 For minimal churn, a compatibility alias can be kept temporarily:
@@ -207,10 +202,16 @@ hlri-isa-cgv/
   REPO_CLEANUP.md
   settings.py
   habitat_config.py
-  vlm_planner.py
   objnav_benchmark.py
   metrics_summary.py
   voca/
+    planning/
+      vlm_planner.py
+    llm/
+      gemini_request.py
+      ollama_request.py
+      navigation_prompts.py
+      priors_parser.py
     navigation/
       pointnav/
         controller.py
@@ -221,11 +222,6 @@ hlri-isa-cgv/
     yoloe_detector.py
   data_utils/
     geometry.py
-  llm_utils/
-    gemini_request.py
-    ollama_request.py
-    navigation_prompts.py
-    priors_parser.py
   third_party/
     vlfm_pointnav/
   note/
@@ -297,18 +293,18 @@ Do not jump directly to this structure until the first-pass rename is tested.
    - `GPT4V` where it means the planner abstraction
 6. Run a syntax/import smoke test.
 7. Run a minimal benchmark command with a small episode count.
-8. Package-style `voca/` refactor has started with `voca/navigation/pointnav`. Continue moving modules only after smoke tests stay stable.
+8. Package-style `voca/` refactor has started with `voca/navigation`, `voca/planning`, and `voca/llm`. Continue moving modules only after smoke tests stay stable.
 
 ## Smoke Tests
 
 Use import checks first:
 
 ```bash
-python -m py_compile settings.py habitat_config.py vlm_planner.py objnav_benchmark.py
+python -m py_compile settings.py habitat_config.py voca/planning/vlm_planner.py objnav_benchmark.py
 python - <<'PY'
 from settings import POINTNAV_CHECKPOINT
 from habitat_config import hm3d_config
-from vlm_planner import VLMPlanner
+from voca.planning import VLMPlanner
 from voca.navigation.pointnav import DepthPointNavController
 print("VOCA import smoke test passed")
 PY

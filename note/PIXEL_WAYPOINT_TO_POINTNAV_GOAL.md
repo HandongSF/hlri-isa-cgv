@@ -22,7 +22,7 @@ YOLOE bbox
 
 ## 1. Waypoint Pixel Source
 
-`vlm_planner.py`의 `apply_priors_on_image()`는 YOLOE detection을 실행한다.
+`voca/planning/vlm_planner.py`의 `apply_priors_on_image()`는 YOLOE detection을 실행한다.
 현재 호출은 box만 사용한다.
 
 ```python

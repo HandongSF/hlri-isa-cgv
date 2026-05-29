@@ -2,14 +2,14 @@ import numpy as np
 from settings import LLM_BACKEND
 
 if LLM_BACKEND == "gemini":
-    from llm_utils.gemini_request import text_response, vision_response
+    from voca.llm.gemini_request import text_response, vision_response
 elif LLM_BACKEND == "ollama":
-    from llm_utils.ollama_request import text_response, vision_response
+    from voca.llm.ollama_request import text_response, vision_response
 else:
     raise ValueError("Unsupported VOCA_LLM_BACKEND: {}".format(LLM_BACKEND))
 
-from llm_utils.navigation_prompts import VLM_PROMPT, PRIORS_PROMPT, PRIOR_CLASS_LIST
-from llm_utils.priors_parser import parse_llm_json, extract_priors, parse_decision_json, dedupe_preserve_order, parse_prior_class_block
+from voca.llm.navigation_prompts import VLM_PROMPT, PRIORS_PROMPT, PRIOR_CLASS_LIST
+from voca.llm.priors_parser import parse_llm_json, extract_priors, parse_decision_json, dedupe_preserve_order, parse_prior_class_block
 from cv_utils.yoloe_detector import *
 from typing import List, Dict, Any, Tuple, Optional, Union
 import cv2
