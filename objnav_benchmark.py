@@ -21,7 +21,7 @@ from tqdm import tqdm
 from habitat_config import hm3d_config
 from voca.planning import VLMPlanner
 from voca.navigation.pointnav import DepthPointNavConfig, DepthPointNavController
-from data_utils.geometry import habitat_camera_intrinsic
+from voca.habitat import habitat_camera_intrinsic
 from voca.navigation.pointnav.geometry import (
     build_depth_waypoint_from_pixel,
     compute_relative_pointgoal,

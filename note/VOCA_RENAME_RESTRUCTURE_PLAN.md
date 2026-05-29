@@ -41,6 +41,8 @@ hlri-isa-cgv/
       ollama_request.py
       navigation_prompts.py
       priors_parser.py
+    habitat/
+      camera.py
     navigation/
       pointnav/
         controller.py
@@ -49,8 +51,6 @@ hlri-isa-cgv/
         reachable.py
   cv_utils/
     yoloe_detector.py
-  data_utils/
-    geometry.py
   third_party/
     vlfm_pointnav/
   note/
@@ -68,8 +68,6 @@ VOCA/
   metrics_summary.py
   cv_utils/
     yoloe_detector.py
-  data_utils/
-    geometry.py
 ```
 
 ## Rename Map
@@ -82,7 +80,7 @@ Apply these renames first, then fix imports.
 | `habitat_config.py` | `habitat_config.py` | Habitat-specific configuration helpers. |
 | `vlm_planner.py` | `voca/planning/vlm_planner.py` | Planner is not necessarily GPT-4V specific; VOCA uses VLM terminology. |
 | `cv_utils/yoloe_detector.py` | `cv_utils/yoloe_detector.py` | More concrete detector module name, matches `/home/gunminy/VOCA`. |
-| `data_utils/geometry.py` | `data_utils/geometry.py` | Shorter reusable geometry module name. |
+| `data_utils/geometry.py` | `voca/habitat/camera.py` | Keep only the Habitat camera intrinsic helper; remove unused pointcloud helpers. |
 | `llm_utils/gpt_request_gemini.py` | `voca/llm/gemini_request.py` | Backend-specific request module. |
 | `llm_utils/gpt_request_ollama.py` | `voca/llm/ollama_request.py` | Backend-specific request module. |
 | `llm_utils/navigation_prompts.py` | `voca/llm/navigation_prompts.py` | Clearer prompt module name. |
@@ -212,6 +210,8 @@ hlri-isa-cgv/
       ollama_request.py
       navigation_prompts.py
       priors_parser.py
+    habitat/
+      camera.py
     navigation/
       pointnav/
         controller.py
@@ -220,8 +220,6 @@ hlri-isa-cgv/
         reachable.py
   cv_utils/
     yoloe_detector.py
-  data_utils/
-    geometry.py
   third_party/
     vlfm_pointnav/
   note/

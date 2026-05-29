@@ -166,7 +166,7 @@ target_kind = "max_depth_fallback"
 
 ## 4. Pixel + Depth to Camera 3D Point
 
-카메라 intrinsic은 `habitat_camera_intrinsic()`에서 계산한다.
+카메라 intrinsic은 `voca.habitat.camera.habitat_camera_intrinsic()`에서 계산한다.
 
 ```python
 cx = (width - 1.0) / 2.0
