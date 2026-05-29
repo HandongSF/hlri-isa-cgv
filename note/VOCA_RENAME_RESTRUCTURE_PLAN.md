@@ -49,9 +49,6 @@ hlri-isa-cgv/
     priors_parser.py
   third_party/
     vlfm_pointnav/
-  vlfm/
-    obs_transformers/
-      resize.py
   note/
 ```
 
@@ -168,13 +165,12 @@ Current:
 
 ```text
 third_party/vlfm_pointnav/
-vlfm/obs_transformers/
 ```
 
 Recommended first-pass decision:
 
 - Keep `third_party/vlfm_pointnav/` in place for now.
-- Keep `vlfm/obs_transformers/resize.py` in place for now if Habitat config loading depends on this module path.
+- Remove `vlfm/obs_transformers/resize.py`; no active code or config references it.
 - Add a VOCA-facing wrapper module later, for example:
 
 ```text
@@ -224,9 +220,6 @@ hlri-isa-cgv/
     priors_parser.py
   third_party/
     vlfm_pointnav/
-  vlfm/
-    obs_transformers/
-      resize.py
   note/
     VOCA_RENAME_RESTRUCTURE_PLAN.md
 ```
@@ -319,8 +312,7 @@ python objnav_benchmark.py --eval_episodes 1
 
 ## Risks
 
-- Habitat config files may refer to module paths such as `vlfm.obs_transformers.resize`.
-  Do not move `vlfm/obs_transformers/resize.py` until those config references are checked.
+- `vlfm/obs_transformers/resize.py` was removed after checking that no active code or config references it.
 - `third_party/vlfm_pointnav` contains adapted external code. Keep license/copyright
   headers and avoid blending it into VOCA-owned modules.
 - Renaming `GPT4V_Planner` immediately can break old scripts. Use a compatibility alias
