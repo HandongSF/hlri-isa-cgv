@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import torch
 from ultralytics import YOLOE
-from settings import YOLOE_CHECKPOINT_PATH
+from settings import DEFAULT_DEVICE, YOLOE_CHECKPOINT_PATH
 
 
 @dataclass
@@ -66,7 +66,7 @@ def _resolve_weights_path(weights: Optional[str]) -> str:
 
 def initialize_yoloe_model(
     weights: Optional[str] = None,
-    device: str = "cuda:0",
+    device: str = DEFAULT_DEVICE,
     classes: Optional[List[str]] = None,
     prompt_mode: str = "text",
     conf_threshold: float = 0.25,

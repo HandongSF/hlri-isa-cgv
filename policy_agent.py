@@ -4,9 +4,10 @@ import numpy as np
 import quaternion
 import time
 from policy_network import PixelNav_Policy
+from settings import DEFAULT_DEVICE, POLICY_CHECKPOINT
 
 class Policy_Agent:
-    def __init__(self,model_path="./checkpoints/navigator.ckpt",max_token_length=64,image_size=224,device="cuda:0"):
+    def __init__(self,model_path=POLICY_CHECKPOINT,max_token_length=64,image_size=224,device=DEFAULT_DEVICE):
         self.image_size = image_size
         self.max_token_length = max_token_length
         self.device = device

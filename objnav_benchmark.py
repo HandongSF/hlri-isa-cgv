@@ -1,7 +1,15 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-os.environ["MAGNUM_LOG"] = "quiet"
-os.environ["HABITAT_SIM_LOG"] = "quiet"
+from settings import (
+    DEFAULT_CUDA_VISIBLE_DEVICES,
+    DEFAULT_DEVICE,
+    POINTNAV_CHECKPOINT,
+    POLICY_CHECKPOINT,
+    YOLOE_CHECKPOINT_PATH,
+)
+
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", DEFAULT_CUDA_VISIBLE_DEVICES)
+os.environ.setdefault("MAGNUM_LOG", "quiet")
+os.environ.setdefault("HABITAT_SIM_LOG", "quiet")
 
 import habitat
 import argparse
@@ -11,7 +19,6 @@ import imageio
 import numpy as np
 import time
 from tqdm import tqdm
-from settings import *
 from habitat_config import hm3d_config
 from vlm_planner import VLMPlanner
 from policy_agent import Policy_Agent
@@ -44,6 +51,7 @@ def get_args():
     parser.add_argument("--eval_episodes", type=int, default=400)
     parser.add_argument("--local_controller", choices=["pixnav", "depth_pointnav"], default="depth_pointnav")
     parser.add_argument("--pointnav_policy_path", type=str, default=POINTNAV_CHECKPOINT)
+    parser.add_argument("--device", type=str, default=DEFAULT_DEVICE)
     return parser.parse_known_args()[0]
 
 
@@ -76,7 +84,7 @@ print("task_actions     =", habitat_config.habitat.task.actions)
 DETECT_OBJECTS = ['bed', 'sofa', 'chair', 'plant', 'tv', 'toilet', 'floor']
 yoloe_model = initialize_yoloe_model(
     weights=YOLOE_CHECKPOINT_PATH,
-    device="cuda:0",
+    device=args.device,
     classes=DETECT_OBJECTS,
     prompt_mode="text",
 )
@@ -88,10 +96,10 @@ except TypeError:
 
 if args.local_controller == "depth_pointnav":
     nav_executor = DepthPointNavController(
-        DepthPointNavConfig(pointnav_policy_path=args.pointnav_policy_path)
+        DepthPointNavConfig(pointnav_policy_path=args.pointnav_policy_path, device=args.device)
     )
 else:
-    nav_executor = Policy_Agent(model_path=POLICY_CHECKPOINT)
+    nav_executor = Policy_Agent(model_path=POLICY_CHECKPOINT, device=args.device)
 evaluation_metrics = []
 
 

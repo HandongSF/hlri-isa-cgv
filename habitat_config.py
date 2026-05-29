@@ -1,7 +1,12 @@
 import habitat
 import os
 import cv2
-from settings import *
+from settings import (
+    EPISODE_PREFIX,
+    HM3D_CONFIG_PATH,
+    MP3D_CONFIG_PATH,
+    SCENE_PREFIX,
+)
 from habitat.config.read_write import read_write
 from habitat.config.default_structured_configs import (
     CollisionsMeasurementConfig,
