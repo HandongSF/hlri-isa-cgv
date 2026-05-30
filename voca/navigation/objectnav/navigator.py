@@ -154,13 +154,13 @@ class VOCANavigator:
     def query_priors_text(self):
         return self.planner.query_priors_text()
 
-    def make_plan(self, pano_images):
-        return self.planner.make_plan(pano_images)
-
     def make_initial_plan(self, pano_images) -> ObjectNavPlan:
         plan = self._make_objectnav_plan(pano_images)
         self._update_goal_state(plan.pri_flag, plan.obj_detected)
         return plan
+
+    def apply_initial_plan(self, obs, plan: ObjectNavPlan) -> None:
+        self.refresh_depth_waypoint(obs, plan.goal_mask)
 
     def make_verification_plan(self, pano_images) -> ObjectNavPlan:
         llm_calls_before = int(self.planner.llm_call_count)
@@ -190,12 +190,6 @@ class VOCANavigator:
         self._update_goal_state(plan.pri_flag, plan.obj_detected, prev_boxes=self.prev_boxes)
         self.refresh_depth_waypoint(obs, plan.goal_mask)
 
-    def apply_priors_on_image(self, *args, **kwargs):
-        return self.planner.apply_priors_on_image(*args, **kwargs)
-
-    def are_bboxes_similar(self, *args, **kwargs):
-        return self.planner.are_bboxes_similar(*args, **kwargs)
-
     def evaluate_local_scan(self, pano_images, angles) -> LocalScanResult:
         if self.prev_boxes is None:
             self.prev_boxes = self.last_bboxes
@@ -208,9 +202,9 @@ class VOCANavigator:
             debug_vis,
             curr_boxes,
             best_idx,
-        ) = self.apply_priors_on_image(pano_images, return_boxes=True)
+        ) = self.planner.apply_priors_on_image(pano_images, return_boxes=True)
 
-        if self.are_bboxes_similar(
+        if self.planner.are_bboxes_similar(
             self.prev_boxes,
             curr_boxes,
             class_sensitive=False,
@@ -294,6 +288,22 @@ class VOCANavigator:
 
     def should_verify(self, action: int) -> bool:
         return bool(self.pending_verify and action == 0)
+
+    def runtime_metrics(self) -> dict:
+        yoloe_durations = self.planner.yoloe_durations
+        llm_durations = self.planner.llm_durations
+        return {
+            "llm_calls": int(self.planner.llm_call_count),
+            "llm_calls_deadlock": int(self.deadlock_llm_calls),
+            "llm_calls_verification": int(self.verification_llm_calls),
+            "llm_success_calls": int(self.planner.llm_success_count),
+            "llm_error_calls": int(self.planner.llm_error_count),
+            "llm_avg_time_sec": float(np.mean(llm_durations)) if len(llm_durations) > 0 else 0.0,
+            "llm_last_error": str(self.planner.llm_last_error) if self.planner.llm_last_error else "",
+            "yoloe_detect_calls": int(len(yoloe_durations)),
+            "yoloe_detect_avg_time_sec": float(np.mean(yoloe_durations)) if len(yoloe_durations) > 0 else 0.0,
+            "yoloe_detect_total_time_sec": float(np.sum(yoloe_durations)) if len(yoloe_durations) > 0 else 0.0,
+        }
 
     def act(self, obs) -> VOCANavigatorAction:
         waypoint = self.current_waypoint

@@ -48,6 +48,7 @@ hlri-isa-cgv/
     navigation/
       objectnav/
         navigator.py
+        runner.py
       pointnav/
         controller.py
         geometry.py
@@ -216,6 +217,7 @@ hlri-isa-cgv/
     navigation/
       objectnav/
         navigator.py
+        runner.py
       pointnav/
         controller.py
         geometry.py
