@@ -19,17 +19,9 @@ import numpy as np
 import time
 from tqdm import tqdm
 from voca.habitat import hm3d_config
-from voca.planning import VLMPlanner
-from voca.navigation.pointnav import DepthPointNavConfig, DepthPointNavController
 from voca.habitat import habitat_camera_intrinsic
-from voca.navigation.pointnav.geometry import (
-    build_depth_waypoint_from_pixel,
-    compute_relative_pointgoal,
-    extract_anchor_pixel_from_mask,
-    restore_metric_depth_from_habitat,
-)
-from voca.navigation.waypoint import resolve_reachable_floor_waypoint
 from habitat.utils.visualizations.maps import colorize_draw_agent_and_fit_to_height
+from voca.navigation.objectnav import VOCANavigator, VOCANavigatorConfig
 from voca.perception import initialize_yoloe_model
 from omegaconf import OmegaConf, open_dict
 
@@ -86,72 +78,19 @@ yoloe_model = initialize_yoloe_model(
     prompt_mode="text",
 )
 
-try:
-    nav_planner = VLMPlanner(yoloe_model)
-except TypeError:
-    nav_planner = VLMPlanner(yoloe_model, yoloe_model)
-
-nav_executor = DepthPointNavController(
-    DepthPointNavConfig(pointnav_policy_path=args.pointnav_policy_path, device=args.device)
+navigator = VOCANavigator(
+    yoloe_model,
+    VOCANavigatorConfig(
+        pointnav_policy_path=args.pointnav_policy_path,
+        device=args.device,
+        camera_intrinsics=camera_intrinsics,
+        min_depth=min_depth,
+        max_depth=max_depth,
+        camera_height=camera_height,
+    ),
 )
 evaluation_metrics = []
 
-
-def yaw_to_rotation(yaw):
-    c = np.cos(float(yaw))
-    s = np.sin(float(yaw))
-    return np.array(
-        [
-            [c, -s, 0.0],
-            [s, c, 0.0],
-            [0.0, 0.0, 1.0],
-        ],
-        dtype=np.float32,
-    )
-
-
-def get_vlfm_pose_from_obs(obs):
-    if "gps" not in obs or "compass" not in obs:
-        raise KeyError("depth_pointnav requires Habitat gps and compass observations")
-    gps = np.asarray(obs["gps"], dtype=np.float32).reshape(-1)
-    heading = float(np.asarray(obs["compass"]).reshape(-1)[0])
-    agent_xy = np.array([gps[0], -gps[1]], dtype=np.float32)
-    camera_position = np.array([agent_xy[0], agent_xy[1], camera_height], dtype=np.float32)
-    return agent_xy, heading, camera_position, yaw_to_rotation(heading)
-
-
-def build_current_depth_waypoint(obs, goal_mask):
-    waypoint_pixel = extract_anchor_pixel_from_mask(goal_mask)
-    if waypoint_pixel is None:
-        return None
-    agent_xy, heading, camera_position, camera_rotation = get_vlfm_pose_from_obs(obs)
-    depth_metric = restore_metric_depth_from_habitat(obs["depth"], min_depth, max_depth)
-    raw_waypoint = build_depth_waypoint_from_pixel(
-        pixel=waypoint_pixel,
-        depth_metric=depth_metric,
-        camera_intrinsics=camera_intrinsics,
-        camera_position=camera_position,
-        camera_rotation=camera_rotation,
-        min_depth=min_depth,
-        max_depth=max_depth,
-    )
-    return resolve_reachable_floor_waypoint(
-        raw_waypoint=raw_waypoint,
-        depth_metric=depth_metric,
-        camera_intrinsics=camera_intrinsics,
-        camera_position=camera_position,
-        camera_rotation=camera_rotation,
-        agent_xy=agent_xy,
-    )
-
-
-def refresh_depth_waypoint(obs, goal_mask, controller):
-    waypoint = build_current_depth_waypoint(obs, goal_mask)
-    if waypoint is None or not waypoint.valid:
-        print("depth waypoint failed", None if waypoint is None else waypoint.failure_reason)
-        return None
-    controller.on_new_waypoint()
-    return waypoint
 
 for i in tqdm(range(args.eval_episodes)):
     obs = habitat_env.reset()
@@ -184,21 +123,21 @@ for i in tqdm(range(args.eval_episodes)):
     deadlock_llm_calls = 0
     verification_llm_calls = 0
 
-    nav_planner.reset(habitat_env.current_episode.object_category)
+    navigator.reset(habitat_env.current_episode.object_category)
     episode_images = [obs['rgb']]
     episode_topdowns = [adjust_topdown(habitat_env.get_metrics())]
 
     # Measure per-episode compute time (exclude video I/O).
     episode_t0 = time.perf_counter()
 
-    nav_planner.query_priors_text()
+    navigator.query_priors_text()
 
     for _ in range(11):
         obs = habitat_env.step(3)
         episode_images.append(obs['rgb'])
         episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
         step_counter += 1
-    goal_image, goal_mask, debug_image, vis_rgb, goal_rotate,  pri_flag, obj_detected = nav_planner.make_plan(episode_images[-12:])
+    goal_image, goal_mask, debug_image, vis_rgb, goal_rotate,  pri_flag, obj_detected = navigator.make_plan(episode_images[-12:])
     pending_verify = (pri_flag and (not obj_detected))
     goal_flag = obj_detected
     for j in range(min(11 - goal_rotate, 1 + goal_rotate)):
@@ -214,40 +153,14 @@ for i in tqdm(range(args.eval_episodes)):
 
     episode_images.append(vis_rgb)
     episode_images.append(vis_rgb)
-    nav_executor.reset()
-    current_waypoint = refresh_depth_waypoint(obs, goal_mask, nav_executor)
+    navigator.controller.reset()
+    navigator.refresh_depth_waypoint(obs, goal_mask)
 
     while not habitat_env.episode_over:
-        if current_waypoint is None or not current_waypoint.valid:
-            action = 0
-            request_replan = not goal_flag
-        else:
-            agent_xy, heading, _, _ = get_vlfm_pose_from_obs(obs)
-            pointgoal = compute_relative_pointgoal(
-                waypoint_world=current_waypoint.world_position,
-                current_agent_xy=agent_xy,
-                current_heading=heading,
-            )
-            print(
-                "depth_pointnav",
-                "pixel", (current_waypoint.pixel_u, current_waypoint.pixel_v),
-                "depth", current_waypoint.initial_depth,
-                "target", current_waypoint.target_kind,
-                "pn_step", nav_executor.steps_for_waypoint,
-                "rho", pointgoal.rho,
-                "theta", pointgoal.theta,
-            )
-
-            if pointgoal.rho < nav_executor.cfg.pointnav_stop_radius:
-                action = 0
-                request_replan = not goal_flag
-                if request_replan:
-                    current_waypoint = None
-            else:
-                action = nav_executor.act(obs['depth'], pointgoal.rho, pointgoal.theta)
-                request_replan = action == 0 and not goal_flag
-                if request_replan:
-                    current_waypoint = None
+        navigator.goal_flag = goal_flag
+        nav_action = navigator.act(obs)
+        action = nav_action.action
+        request_replan = nav_action.request_replan
 
         if not request_replan:
             if action == 4:
@@ -286,7 +199,7 @@ for i in tqdm(range(args.eval_episodes)):
                     episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                     step_counter += 1
 
-                _llm_calls_before = int(nav_planner.llm_call_count)
+                _llm_calls_before = int(navigator.planner.llm_call_count)
                 (
                     verify_goal_image,
                     verify_goal_mask,
@@ -295,8 +208,8 @@ for i in tqdm(range(args.eval_episodes)):
                     verify_rotate,
                     verify_pri_flag,
                     verify_obj_detected
-                ) = nav_planner.make_plan(episode_images[-12:])
-                verification_llm_calls += int(nav_planner.llm_call_count) - _llm_calls_before
+                ) = navigator.make_plan(episode_images[-12:])
+                verification_llm_calls += int(navigator.planner.llm_call_count) - _llm_calls_before
 
                 for j in range(min(11 - verify_rotate, 1 + verify_rotate)):
                     if habitat_env.episode_over: break
@@ -316,23 +229,23 @@ for i in tqdm(range(args.eval_episodes)):
                     goal_mask = verify_goal_mask
                     goal_flag = True
                     pending_verify = False
-                    current_waypoint = refresh_depth_waypoint(obs, goal_mask, nav_executor)
+                    navigator.refresh_depth_waypoint(obs, goal_mask)
                     continue
 
                 elif verify_pri_flag:
                     pending_verify = True
                     goal_flag = False
-                    prev_boxes = getattr(nav_planner, "_last_bboxes", [])
+                    prev_boxes = navigator.last_bboxes
                 else:
                     pending_verify = False
                     goal_flag = False
-                    prev_boxes = getattr(nav_planner, "_last_bboxes", [])
+                    prev_boxes = navigator.last_bboxes
 
                 goal_image, goal_mask = verify_goal_image, verify_goal_mask
-                current_waypoint = refresh_depth_waypoint(obs, goal_mask, nav_executor)
+                navigator.refresh_depth_waypoint(obs, goal_mask)
                 continue
             
-            prev_boxes = getattr(nav_planner, "_last_bboxes", []) if prev_boxes is None else prev_boxes
+            prev_boxes = navigator.last_bboxes if prev_boxes is None else prev_boxes
 
             pano7 = []
             angles7 = []
@@ -366,10 +279,10 @@ for i in tqdm(range(args.eval_episodes)):
                 debug_vis,         # vis_rgb
                 curr_boxes,
                 best_idx
-            ) = nav_planner.apply_priors_on_image(pano7, return_boxes=True)
+            ) = navigator.apply_priors_on_image(pano7, return_boxes=True)
 
 
-            if nav_planner.are_bboxes_similar(
+            if navigator.are_bboxes_similar(
                 prev_boxes, curr_boxes,
                 class_sensitive=False,
                 ignore_classes=['floor','ground','flooring'],
@@ -382,7 +295,7 @@ for i in tqdm(range(args.eval_episodes)):
                     episode_topdowns.append(adjust_topdown(habitat_env.get_metrics()))
                     step_counter += 1
 
-                _llm_calls_before = int(nav_planner.llm_call_count)
+                _llm_calls_before = int(navigator.planner.llm_call_count)
                 (
                     goal_image,
                     goal_mask,
@@ -391,8 +304,8 @@ for i in tqdm(range(args.eval_episodes)):
                     goal_rotate,
                     pri_flag,
                     obj_detected
-                ) = nav_planner.make_plan(episode_images[-12:])
-                deadlock_llm_calls += int(nav_planner.llm_call_count) - _llm_calls_before
+                ) = navigator.make_plan(episode_images[-12:])
+                deadlock_llm_calls += int(navigator.planner.llm_call_count) - _llm_calls_before
 
                 for j in range(min(11 - goal_rotate, 1 + goal_rotate)):
                     if habitat_env.episode_over: break
@@ -406,7 +319,7 @@ for i in tqdm(range(args.eval_episodes)):
 
                 episode_images.append(vis_rgb2); episode_images.append(vis_rgb2)
 
-                prev_boxes = getattr(nav_planner, "_last_bboxes", [])
+                prev_boxes = navigator.last_bboxes
                 pending_verify = (pri_flag and (not obj_detected))
                 goal_flag = obj_detected
 
@@ -440,7 +353,7 @@ for i in tqdm(range(args.eval_episodes)):
             print("goal _flag", goal_flag)
             print("step_counter", step_counter)
             step_counter = 0
-            current_waypoint = refresh_depth_waypoint(obs, goal_mask, nav_executor)
+            navigator.refresh_depth_waypoint(obs, goal_mask)
 
     habitat_env.step = _orig_step
 
@@ -464,16 +377,16 @@ for i in tqdm(range(args.eval_episodes)):
         'spl': habitat_env.get_metrics()['spl'],
         'start_distance_to_goal': start_geodesic_m, 
         'final_distance_to_goal': habitat_env.get_metrics()['distance_to_goal'],
-        'llm_calls': int(nav_planner.llm_call_count),
+        'llm_calls': int(navigator.planner.llm_call_count),
         'llm_calls_deadlock': int(deadlock_llm_calls),
         'llm_calls_verification': int(verification_llm_calls),
-        'llm_success_calls': int(nav_planner.llm_success_count),
-        'llm_error_calls': int(nav_planner.llm_error_count),
-        'llm_avg_time_sec': float(np.mean(nav_planner.llm_durations)) if len(nav_planner.llm_durations) > 0 else 0.0,
-        'llm_last_error': str(nav_planner.llm_last_error) if nav_planner.llm_last_error else "",
-        'yoloe_detect_calls': int(len(nav_planner.yoloe_durations)),
-        'yoloe_detect_avg_time_sec': float(np.mean(nav_planner.yoloe_durations)) if len(nav_planner.yoloe_durations) > 0 else 0.0,
-        'yoloe_detect_total_time_sec': float(np.sum(nav_planner.yoloe_durations)) if len(nav_planner.yoloe_durations) > 0 else 0.0,
+        'llm_success_calls': int(navigator.planner.llm_success_count),
+        'llm_error_calls': int(navigator.planner.llm_error_count),
+        'llm_avg_time_sec': float(np.mean(navigator.planner.llm_durations)) if len(navigator.planner.llm_durations) > 0 else 0.0,
+        'llm_last_error': str(navigator.planner.llm_last_error) if navigator.planner.llm_last_error else "",
+        'yoloe_detect_calls': int(len(navigator.planner.yoloe_durations)),
+        'yoloe_detect_avg_time_sec': float(np.mean(navigator.planner.yoloe_durations)) if len(navigator.planner.yoloe_durations) > 0 else 0.0,
+        'yoloe_detect_total_time_sec': float(np.sum(navigator.planner.yoloe_durations)) if len(navigator.planner.yoloe_durations) > 0 else 0.0,
         'episode_time_sec': float(episode_time_sec),
         'num_steps': int(habitat_env.get_metrics().get('num_steps', 0)),
         'total_distance_m': float(_stats['dist_m']),

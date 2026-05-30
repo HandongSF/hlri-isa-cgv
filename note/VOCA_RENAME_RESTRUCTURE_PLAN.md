@@ -46,6 +46,8 @@ hlri-isa-cgv/
     perception/
       yoloe_detector.py
     navigation/
+      objectnav/
+        navigator.py
       pointnav/
         controller.py
         geometry.py
@@ -212,6 +214,8 @@ hlri-isa-cgv/
     perception/
       yoloe_detector.py
     navigation/
+      objectnav/
+        navigator.py
       pointnav/
         controller.py
         geometry.py
