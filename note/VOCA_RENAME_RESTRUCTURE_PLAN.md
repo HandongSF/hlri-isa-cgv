@@ -30,7 +30,6 @@ For the first cleanup pass, use the naming and file structure style from
 hlri-isa-cgv/
   README.md
   settings.py
-  habitat_config.py
   objnav_benchmark.py
   metrics_summary.py
   voca/
@@ -42,6 +41,7 @@ hlri-isa-cgv/
       navigation_prompts.py
       priors_parser.py
     habitat/
+      config.py
       camera.py
     perception/
       yoloe_detector.py
@@ -63,7 +63,6 @@ VOCA/
   README.md
   REPO_CLEANUP.md
   settings.py
-  habitat_config.py
   objnav_benchmark.py
   metrics_summary.py
 ```
@@ -75,7 +74,7 @@ Apply these renames first, then fix imports.
 | Current file | Target file | Reason |
 | --- | --- | --- |
 | `constants.py` | `settings.py` | Central project settings and environment-variable based paths. |
-| `habitat_config.py` | `habitat_config.py` | Habitat-specific configuration helpers. |
+| `habitat_config.py` | `voca/habitat/config.py` | Habitat-specific configuration helpers. |
 | `vlm_planner.py` | `voca/planning/vlm_planner.py` | Planner is not necessarily GPT-4V specific; VOCA uses VLM terminology. |
 | `cv_utils/yoloe_detector.py` | `voca/perception/yoloe_detector.py` | YOLOE is the VOCA perception backend. |
 | `data_utils/geometry.py` | `voca/habitat/camera.py` | Keep only the Habitat camera intrinsic helper; remove unused pointcloud helpers. |
@@ -118,7 +117,7 @@ from habitat_config import hm3d_config
 to:
 
 ```python
-from habitat_config import hm3d_config
+from voca.habitat import hm3d_config
 ```
 
 ```python
@@ -197,7 +196,6 @@ hlri-isa-cgv/
   README.md
   REPO_CLEANUP.md
   settings.py
-  habitat_config.py
   objnav_benchmark.py
   metrics_summary.py
   voca/
@@ -209,6 +207,7 @@ hlri-isa-cgv/
       navigation_prompts.py
       priors_parser.py
     habitat/
+      config.py
       camera.py
     perception/
       yoloe_detector.py
@@ -237,7 +236,8 @@ VOCA/
   voca/
     __init__.py
     settings.py
-    habitat_config.py
+    habitat/
+      config.py
     benchmark/
       objnav.py
       metrics.py
@@ -296,10 +296,10 @@ Do not jump directly to this structure until the first-pass rename is tested.
 Use import checks first:
 
 ```bash
-python -m py_compile settings.py habitat_config.py voca/planning/vlm_planner.py objnav_benchmark.py
+python -m py_compile settings.py voca/habitat/config.py voca/planning/vlm_planner.py objnav_benchmark.py
 python - <<'PY'
 from settings import POINTNAV_CHECKPOINT
-from habitat_config import hm3d_config
+from voca.habitat import hm3d_config
 from voca.planning import VLMPlanner
 from voca.navigation.pointnav import DepthPointNavController
 print("VOCA import smoke test passed")

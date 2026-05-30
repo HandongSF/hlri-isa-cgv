@@ -18,7 +18,7 @@ import imageio
 import numpy as np
 import time
 from tqdm import tqdm
-from habitat_config import hm3d_config
+from voca.habitat import hm3d_config
 from voca.planning import VLMPlanner
 from voca.navigation.pointnav import DepthPointNavConfig, DepthPointNavController
 from voca.habitat import habitat_camera_intrinsic

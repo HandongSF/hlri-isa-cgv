@@ -75,7 +75,7 @@ v ~= bbox center y + small downward bias
 
 ## 2. Depth Sensor Values
 
-`depth_pointnav` 모드에서는 `habitat_config.py`의 `_enable_depth_pointnav_mode()`가
+`depth_pointnav` 모드에서는 `voca/habitat/config.py`의 `_enable_depth_pointnav_mode()`가
 Habitat depth sensor를 다음 값으로 설정한다.
 
 ```python
