@@ -11,6 +11,15 @@ from habitat.utils.visualizations.maps import colorize_draw_agent_and_fit_to_hei
 from .navigator import VOCANavigator
 
 
+TURN_RIGHT = 2
+TURN_LEFT = 3
+FULL_SCAN_TURNS = 11
+LOCAL_SCAN_LEFT_TURNS = 3
+LOCAL_SCAN_RIGHT_TURNS = 6
+LOCAL_SCAN_START_DEG = -90
+HABITAT_TURN_DEG = 30
+
+
 @dataclass
 class ObjectNavEpisodeRunnerConfig:
     output_dir: str = "./tmp"
@@ -79,8 +88,8 @@ class ObjectNavEpisodeRunner:
         try:
             self.navigator.query_priors_text()
 
-            obs = run_actions(obs, [3] * 11)
-            initial_plan = self.navigator.make_initial_plan(episode_images[-12:])
+            obs = run_actions(obs, self._full_scan_actions())
+            initial_plan = self.navigator.make_initial_plan(episode_images[-self._full_scan_frame_count():])
             obs = run_actions(obs, self._rotation_actions_for_plan(initial_plan))
             append_debug_frame(initial_plan.vis_rgb)
             self.navigator.apply_initial_plan(obs, initial_plan)
@@ -103,17 +112,17 @@ class ObjectNavEpisodeRunner:
                     break
 
                 if self.navigator.should_verify(action):
-                    obs = run_actions(obs, [3] * 11)
+                    obs = run_actions(obs, self._full_scan_actions())
                     if self.env.episode_over:
                         break
 
-                    verify_plan = self.navigator.make_verification_plan(episode_images[-12:])
+                    verify_plan = self.navigator.make_verification_plan(episode_images[-self._full_scan_frame_count():])
                     obs = run_actions(obs, self._rotation_actions_for_plan(verify_plan))
                     append_debug_frame(verify_plan.vis_rgb)
                     self.navigator.apply_verification_plan(obs, verify_plan)
                     continue
 
-                obs = run_actions(obs, [3] * 3)
+                obs = run_actions(obs, self._local_scan_left_actions())
                 if self.env.episode_over:
                     break
 
@@ -124,11 +133,11 @@ class ObjectNavEpisodeRunner:
                 scan_result = self.navigator.evaluate_local_scan(pano_images, pano_angles)
 
                 if scan_result.deadlocked:
-                    obs = run_actions(obs, [3] * 11)
+                    obs = run_actions(obs, self._full_scan_actions())
                     if self.env.episode_over:
                         break
 
-                    deadlock_plan = self.navigator.make_deadlock_plan(episode_images[-12:])
+                    deadlock_plan = self.navigator.make_deadlock_plan(episode_images[-self._full_scan_frame_count():])
                     obs = run_actions(obs, self._rotation_actions_for_plan(deadlock_plan))
                     append_debug_frame(deadlock_plan.vis_rgb)
                     self.navigator.apply_deadlock_plan(obs, deadlock_plan)
@@ -152,19 +161,35 @@ class ObjectNavEpisodeRunner:
 
     def _collect_local_scan(self, obs, step_and_record, episode_images):
         pano_images: List[np.ndarray] = [episode_images[-1]]
-        pano_angles = [-90]
-        for k in range(6):
+        pano_angles = [LOCAL_SCAN_START_DEG]
+        for k, action in enumerate(self._local_scan_right_actions()):
             if self.env.episode_over:
                 break
-            obs = step_and_record(2)
+            obs = step_and_record(action)
             pano_images.append(obs["rgb"])
-            pano_angles.append(-90 + 30 * (k + 1))
+            pano_angles.append(LOCAL_SCAN_START_DEG + HABITAT_TURN_DEG * (k + 1))
         return pano_images, pano_angles, obs
 
     @staticmethod
+    def _full_scan_actions():
+        return [TURN_LEFT] * FULL_SCAN_TURNS
+
+    @staticmethod
+    def _full_scan_frame_count():
+        return FULL_SCAN_TURNS + 1
+
+    @staticmethod
+    def _local_scan_left_actions():
+        return [TURN_LEFT] * LOCAL_SCAN_LEFT_TURNS
+
+    @staticmethod
+    def _local_scan_right_actions():
+        return [TURN_RIGHT] * LOCAL_SCAN_RIGHT_TURNS
+
+    @staticmethod
     def _rotation_actions_for_plan(plan):
-        rotate_steps = min(11 - plan.rotate, 1 + plan.rotate)
-        action = 3 if plan.rotate <= 6 else 2
+        rotate_steps = min(FULL_SCAN_TURNS - plan.rotate, 1 + plan.rotate)
+        action = TURN_LEFT if plan.rotate <= FULL_SCAN_TURNS // 2 else TURN_RIGHT
         return [action] * rotate_steps
 
     @staticmethod
