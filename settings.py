@@ -39,6 +39,14 @@ EPISODE_PREFIX = _dir_from_env("VOCA_DATASETS_DIR", Path(DATA_ROOT) / "datasets"
 CHECKPOINT_DIR = _path_from_env("VOCA_CHECKPOINT_DIR", PROJECT_ROOT / "checkpoints")
 POINTNAV_CHECKPOINT = _path_from_env("VOCA_POINTNAV_CHECKPOINT", Path(CHECKPOINT_DIR) / "pointnav_weights.pth")
 YOLOE_CHECKPOINT_PATH = _path_from_env("VOCA_YOLOE_CHECKPOINT", Path(CHECKPOINT_DIR) / "yoloe-11l-seg.pt")
+POINTNAV_VO_FORWARD_CHECKPOINT = _path_from_env(
+    "VOCA_POINTNAV_VO_FORWARD_CHECKPOINT",
+    Path(CHECKPOINT_DIR) / "vo" / "act_forward.pth",
+)
+POINTNAV_VO_TURN_CHECKPOINT = _path_from_env(
+    "VOCA_POINTNAV_VO_TURN_CHECKPOINT",
+    Path(CHECKPOINT_DIR) / "vo" / "act_left_right_inv_joint.pth",
+)
 
 # LLM/VLM backend. Supported values: gemini, ollama.
 LLM_BACKEND = os.getenv("VOCA_LLM_BACKEND", "gemini").lower()

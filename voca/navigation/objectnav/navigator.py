@@ -3,7 +3,13 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from settings import DEFAULT_DEVICE, POINTNAV_CHECKPOINT
+from settings import (
+    DEFAULT_DEVICE,
+    POINTNAV_CHECKPOINT,
+    POINTNAV_VO_FORWARD_CHECKPOINT,
+    POINTNAV_VO_TURN_CHECKPOINT,
+)
+from third_party.pointnav_vo import PointNavVisualOdometry, PointNavVisualOdometryConfig
 from voca.navigation.pointnav import DepthPointNavConfig, DepthPointNavController
 from voca.navigation.pointnav.geometry import (
     DepthWaypoint,
@@ -64,6 +70,13 @@ class VOCANavigator:
         self.min_depth = float(cfg.min_depth)
         self.max_depth = float(cfg.max_depth)
         self.camera_height = float(cfg.camera_height)
+        self.visual_odometry = PointNavVisualOdometry(
+            PointNavVisualOdometryConfig(
+                forward_checkpoint=POINTNAV_VO_FORWARD_CHECKPOINT,
+                turn_checkpoint=POINTNAV_VO_TURN_CHECKPOINT,
+                device=cfg.device,
+            )
+        )
 
         try:
             self.planner = VLMPlanner(yoloe_model)
@@ -87,6 +100,7 @@ class VOCANavigator:
     def reset(self, object_goal: str) -> None:
         self.planner.reset(object_goal)
         self.controller.reset()
+        self.visual_odometry.reset()
         self.current_waypoint = None
         self.goal_flag = False
         self.pending_verify = False
@@ -109,13 +123,12 @@ class VOCANavigator:
         )
 
     def get_vlfm_pose_from_obs(self, obs) -> Tuple[np.ndarray, float, np.ndarray, np.ndarray]:
-        if "gps" not in obs or "compass" not in obs:
-            raise KeyError("depth_pointnav requires Habitat gps and compass observations")
-        gps = np.asarray(obs["gps"], dtype=np.float32).reshape(-1)
-        heading = float(np.asarray(obs["compass"]).reshape(-1)[0])
-        agent_xy = np.array([gps[0], -gps[1]], dtype=np.float32)
+        agent_xy, heading = self.visual_odometry.pose()
         camera_position = np.array([agent_xy[0], agent_xy[1], self.camera_height], dtype=np.float32)
         return agent_xy, heading, camera_position, self.yaw_to_rotation(heading)
+
+    def observe_transition(self, prev_obs, cur_obs, action: int) -> None:
+        self.visual_odometry.update(prev_obs, cur_obs, action)
 
     def build_current_depth_waypoint(self, obs, goal_mask) -> Optional[DepthWaypoint]:
         waypoint_pixel = extract_anchor_pixel_from_mask(goal_mask)
@@ -142,6 +155,9 @@ class VOCANavigator:
         )
 
     def refresh_depth_waypoint(self, obs, goal_mask) -> Optional[DepthWaypoint]:
+        # Each depth waypoint defines a new local navigation frame. Reset before
+        # projecting the waypoint so it and subsequent VO poses share that frame.
+        self.visual_odometry.reset()
         waypoint = self.build_current_depth_waypoint(obs, goal_mask)
         if waypoint is None or not waypoint.valid:
             print("depth waypoint failed", None if waypoint is None else waypoint.failure_reason)

@@ -11,31 +11,56 @@ from habitat.config.read_write import read_write
 from habitat.config.default_structured_configs import (
     CollisionsMeasurementConfig,
     FogOfWarConfig,
+    HabitatSimDepthSensorConfig,
+    HabitatSimRGBSensorConfig,
     TopDownMapMeasurementConfig,
 )
 from habitat.config.default_structured_configs import LookUpActionConfig,LookDownActionConfig,NumStepsMeasurementConfig
-
-try:
-    from habitat.config.default_structured_configs import CompassSensorConfig, GPSSensorConfig
-except ImportError:
-    CompassSensorConfig = None
-    GPSSensorConfig = None
+from omegaconf import OmegaConf, open_dict
 
 
 def _enable_depth_pointnav_mode(habitat_config):
-    if CompassSensorConfig is None or GPSSensorConfig is None:
-        raise ImportError("Depth PointNav mode requires CompassSensorConfig and GPSSensorConfig.")
-
     habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.min_depth = 0.5
     habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.max_depth = 5.0
     habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.normalize_depth = True
 
-    if not hasattr(habitat_config.habitat.task, "lab_sensors") or habitat_config.habitat.task.lab_sensors is None:
-        habitat_config.habitat.task.lab_sensors = {}
-    if "gps_sensor" not in habitat_config.habitat.task.lab_sensors:
-        habitat_config.habitat.task.lab_sensors["gps_sensor"] = GPSSensorConfig()
-    if "compass_sensor" not in habitat_config.habitat.task.lab_sensors:
-        habitat_config.habitat.task.lab_sensors["compass_sensor"] = CompassSensorConfig()
+    if hasattr(habitat_config.habitat.task, "lab_sensors"):
+        habitat_config.habitat.task.lab_sensors.pop("gps_sensor", None)
+        habitat_config.habitat.task.lab_sensors.pop("compass_sensor", None)
+    _enable_pointnav_vo_sensors(habitat_config)
+
+
+def _enable_pointnav_vo_sensors(habitat_config):
+    sensor_position = list(
+        habitat_config.habitat.simulator.agents.main_agent.sim_sensors.rgb_sensor.position
+    )
+    vo_rgb = OmegaConf.structured(
+        HabitatSimRGBSensorConfig(
+            height=192,
+            width=341,
+            position=sensor_position,
+            hfov=70,
+        )
+    )
+    vo_depth = OmegaConf.structured(
+        HabitatSimDepthSensorConfig(
+            height=192,
+            width=341,
+            position=sensor_position,
+            hfov=70,
+            min_depth=0.1,
+            max_depth=10.0,
+            normalize_depth=True,
+        )
+    )
+    with open_dict(vo_rgb):
+        vo_rgb.uuid = "vo_rgb"
+    with open_dict(vo_depth):
+        vo_depth.uuid = "vo_depth"
+
+    sim_sensors = habitat_config.habitat.simulator.agents.main_agent.sim_sensors
+    sim_sensors["vo_rgb_sensor"] = vo_rgb
+    sim_sensors["vo_depth_sensor"] = vo_depth
 
 # habitat config used to run the benchmark for objnav in hm3d dataset
 def hm3d_config(path:str=HM3D_CONFIG_PATH,stage:str='val',episodes=200, depth_pointnav=False):

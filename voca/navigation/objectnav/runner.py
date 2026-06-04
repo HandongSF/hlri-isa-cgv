@@ -62,13 +62,17 @@ class ObjectNavEpisodeRunner:
         episode_images = [obs["rgb"]]
         episode_topdowns = [self._adjust_topdown(self.env.get_metrics())]
         episode_state = {"step_counter": 0}
+        transition_state = {"obs": obs}
         start_geodesic_m = float(self.env.get_metrics()["distance_to_goal"])
 
         self.navigator.reset(self.env.current_episode.object_category)
         episode_t0 = time.perf_counter()
 
         def step_and_record(action):
+            prev_obs = transition_state["obs"]
             obs_ = self.env.step(action)
+            self.navigator.observe_transition(prev_obs, obs_, action)
+            transition_state["obs"] = obs_
             episode_images.append(obs_["rgb"])
             episode_topdowns.append(self._adjust_topdown(self.env.get_metrics()))
             episode_state["step_counter"] += 1
